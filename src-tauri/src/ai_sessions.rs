@@ -27,18 +27,33 @@ impl ClaudeSessionReader {
 
     fn find_project_dir(projects_dir: &Path, project_path: &Path) -> Option<PathBuf> {
         let project_str = project_path.to_string_lossy().to_string();
+
+        // 将项目路径编码为 Claude 的目录名格式
+        let encoded = project_str
+            .replace(":", "")
+            .replace("\\", "-")
+            .replace("/", "-");
+
+        // 直接匹配编码后的目录名
+        let direct = projects_dir.join(&encoded);
+        if direct.is_dir() {
+            return Some(direct);
+        }
+
+        // 模糊匹配：遍历所有项目目录，检查是否包含编码后的路径
         if let Ok(entries) = fs::read_dir(projects_dir) {
             for entry in entries.flatten() {
+                if !entry.file_type().ok().map(|t| t.is_dir()).unwrap_or(false) {
+                    continue;
+                }
                 let dir_name = entry.file_name().to_string_lossy().to_string();
-                let decoded = dir_name.replace("-", "\\").replace("--", "-");
-                if decoded.contains(&project_str) || dir_name.contains(&project_str.replace("\\", "-").replace(":", "")) {
+                // 检查目录名是否以编码后的路径结尾（Claude 可能加了前缀）
+                if dir_name == encoded || dir_name.ends_with(&encoded) {
                     return Some(entry.path());
                 }
             }
         }
-        let encoded = project_str.replace("\\", "-").replace(":", "").replace("/", "-");
-        let direct = projects_dir.join(&encoded);
-        if direct.is_dir() { return Some(direct); }
+
         None
     }
 }

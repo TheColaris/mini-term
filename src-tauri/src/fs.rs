@@ -1,3 +1,4 @@
+use ignore::gitignore::Gitignore;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher, Event as NotifyEvent};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -14,28 +15,23 @@ pub struct FileEntry {
     pub is_dir: bool,
 }
 
-fn load_gitignore_patterns(project_root: &Path) -> Vec<String> {
+fn build_gitignore(project_root: &Path) -> Option<Gitignore> {
     let gitignore_path = project_root.join(".gitignore");
-    match fs::read_to_string(&gitignore_path) {
-        Ok(content) => content
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect(),
-        Err(_) => vec![],
+    if !gitignore_path.exists() {
+        return None;
     }
+    let (gi, _err) = Gitignore::new(&gitignore_path);
+    Some(gi)
 }
 
-fn should_ignore(name: &str, is_dir: bool, patterns: &[String]) -> bool {
-    let always_ignore = [".git", "node_modules", "target", ".next", "dist", "__pycache__", ".superpowers"];
-    if is_dir && always_ignore.contains(&name) {
+const ALWAYS_IGNORE: &[&str] = &[".git", "node_modules", "target", ".next", "dist", "__pycache__", ".superpowers"];
+
+fn should_ignore(name: &str, full_path: &Path, is_dir: bool, gitignore: &Option<Gitignore>) -> bool {
+    if is_dir && ALWAYS_IGNORE.contains(&name) {
         return true;
     }
-    for pattern in patterns {
-        let p = pattern.trim_end_matches('/');
-        if name == p {
-            return true;
-        }
+    if let Some(gi) = gitignore {
+        return gi.matched(full_path, is_dir).is_ignore();
     }
     false
 }
@@ -46,19 +42,20 @@ pub fn list_directory(project_root: String, path: String) -> Result<Vec<FileEntr
     if !dir.is_dir() {
         return Err(format!("Not a directory: {}", path));
     }
-    let patterns = load_gitignore_patterns(Path::new(&project_root));
+    let gitignore = build_gitignore(Path::new(&project_root));
     let mut entries: Vec<FileEntry> = fs::read_dir(dir)
         .map_err(|e| e.to_string())?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let name = entry.file_name().to_string_lossy().to_string();
             let is_dir = entry.file_type().ok()?.is_dir();
-            if should_ignore(&name, is_dir, &patterns) {
+            let full_path = entry.path();
+            if should_ignore(&name, &full_path, is_dir, &gitignore) {
                 return None;
             }
             Some(FileEntry {
                 name,
-                path: entry.path().to_string_lossy().to_string(),
+                path: full_path.to_string_lossy().to_string(),
                 is_dir,
             })
         })
@@ -130,12 +127,15 @@ mod tests {
 
     #[test]
     fn should_ignore_node_modules() {
-        assert!(should_ignore("node_modules", true, &[]));
-        assert!(should_ignore(".git", true, &[]));
+        let path = Path::new("node_modules");
+        assert!(should_ignore("node_modules", path, true, &None));
+        let git_path = Path::new(".git");
+        assert!(should_ignore(".git", git_path, true, &None));
     }
 
     #[test]
     fn should_not_ignore_src() {
-        assert!(!should_ignore("src", true, &[]));
+        let path = Path::new("src");
+        assert!(!should_ignore("src", path, true, &None));
     }
 }
