@@ -5,14 +5,11 @@ import { useAppStore } from './store';
 import { TerminalArea } from './components/TerminalArea';
 import { ProjectList } from './components/ProjectList';
 import { FileTree } from './components/FileTree';
-import { AIHistoryPanel } from './components/AIHistoryPanel';
 import { SettingsModal } from './components/SettingsModal';
 import { useTauriEvent } from './hooks/useTauriEvent';
 import type { AppConfig, PtyStatusChangePayload, PtyExitPayload, PaneStatus } from './types';
 
 export function App() {
-  const aiPanelVisible = useAppStore((s) => s.aiPanelVisible);
-  const toggleAiPanel = useAppStore((s) => s.toggleAiPanel);
   const [configOpen, setConfigOpen] = useState(false);
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const config = useAppStore((s) => s.config);
@@ -62,17 +59,6 @@ export function App() {
     }, 500);
   }, [setConfig]);
 
-  const saveAiPanelSize = useCallback((sizes: number[]) => {
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const cfg = useAppStore.getState().config;
-      // sizes[1] 是 AI 面板宽度
-      const newConfig = { ...cfg, aiPanelSize: sizes.length > 1 ? sizes[1] : undefined };
-      setConfig(newConfig);
-      invoke('save_config', { config: newConfig });
-    }, 500);
-  }, [setConfig]);
-
   const activeProject = config.projects.find((p) => p.id === activeProjectId);
 
   return (
@@ -86,12 +72,6 @@ export function App() {
         <div className="flex items-center gap-3 text-[var(--text-muted)]" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <span className="cursor-pointer hover:text-[var(--text-primary)] transition-colors duration-150">终端</span>
           <span className="cursor-pointer hover:text-[var(--text-primary)] transition-colors duration-150" onClick={() => setConfigOpen(true)}>设置</span>
-          <span
-            className={`cursor-pointer transition-colors duration-150 ${aiPanelVisible ? 'text-[var(--accent)]' : 'hover:text-[var(--text-primary)]'}`}
-            onClick={toggleAiPanel}
-          >
-            AI 历史
-          </span>
         </div>
         <div className="flex-1" />
         <div className="flex items-center gap-1.5 text-[var(--text-muted)]" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
@@ -115,26 +95,13 @@ export function App() {
           </Allotment.Pane>
 
           <Allotment.Pane>
-            <Allotment
-              defaultSizes={config.aiPanelSize && aiPanelVisible ? [1000, config.aiPanelSize] : undefined}
-              onChange={aiPanelVisible ? saveAiPanelSize : undefined}
-            >
-              <Allotment.Pane>
-                {activeProject ? (
-                  <TerminalArea projectId={activeProject.id} projectPath={activeProject.path} />
-                ) : (
-                  <div className="h-full bg-[var(--bg-terminal)] flex items-center justify-center text-[var(--text-muted)] text-sm">
-                    请先在左栏添加项目
-                  </div>
-                )}
-              </Allotment.Pane>
-
-              {aiPanelVisible && (
-                <Allotment.Pane preferredSize={config.aiPanelSize ?? 180} minSize={140} maxSize={280} snap>
-                  <AIHistoryPanel />
-                </Allotment.Pane>
-              )}
-            </Allotment>
+            {activeProject ? (
+              <TerminalArea projectId={activeProject.id} projectPath={activeProject.path} />
+            ) : (
+              <div className="h-full bg-[var(--bg-terminal)] flex items-center justify-center text-[var(--text-muted)] text-sm">
+                请先在左栏添加项目
+              </div>
+            )}
           </Allotment.Pane>
         </Allotment>
       </div>

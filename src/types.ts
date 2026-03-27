@@ -7,7 +7,6 @@ export interface AppConfig {
   uiFontSize: number;
   terminalFontSize: number;
   layoutSizes?: number[];
-  aiPanelSize?: number;
 }
 
 export interface ProjectConfig {
@@ -48,16 +47,6 @@ export interface PaneState {
   shellName: string;
   status: PaneStatus;
   ptyId: number;
-}
-
-// === AI 会话 ===
-
-export interface AISession {
-  id: string;
-  sessionType: 'claude' | 'codex';
-  projectPath: string;
-  startTime: string;
-  messageCount: number;
 }
 
 // === 文件树 ===

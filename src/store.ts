@@ -6,7 +6,6 @@ import type {
   TerminalTab,
   SplitNode,
   PaneStatus,
-  AISession,
 } from './types';
 
 // 生成唯一 ID
@@ -72,13 +71,6 @@ interface AppStore {
   // Pane 状态
   updatePaneStatusByPty: (ptyId: number, status: PaneStatus) => void;
 
-  // AI 历史
-  aiSessions: AISession[];
-  setAiSessions: (sessions: AISession[]) => void;
-
-  // AI 历史面板
-  aiPanelVisible: boolean;
-  toggleAiPanel: () => void;
 }
 
 export const useAppStore = create<AppStore>((set) => ({
@@ -216,9 +208,4 @@ export const useAppStore = create<AppStore>((set) => ({
       return changed ? { projectStates: newStates } : state;
     }),
 
-  aiSessions: [],
-  setAiSessions: (sessions) => set({ aiSessions: sessions }),
-
-  aiPanelVisible: true,
-  toggleAiPanel: () => set((state) => ({ aiPanelVisible: !state.aiPanelVisible })),
 }));
