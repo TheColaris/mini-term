@@ -11,9 +11,10 @@ interface Props {
   ptyId: number;
   paneId?: string;
   onSplit?: (paneId: string, direction: 'horizontal' | 'vertical') => void;
+  onClose?: (paneId: string) => void;
 }
 
-export function TerminalInstance({ ptyId, paneId, onSplit }: Props) {
+export function TerminalInstance({ ptyId, paneId, onSplit, onClose }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -126,6 +127,21 @@ export function TerminalInstance({ ptyId, paneId, onSplit }: Props) {
           };
           menu.appendChild(item);
         });
+
+        // 分隔线
+        const sep = document.createElement('div');
+        sep.className = 'border-t border-[#333] my-1';
+        menu.appendChild(sep);
+
+        // 关闭面板
+        const closeItem = document.createElement('div');
+        closeItem.className = 'px-3 py-1.5 cursor-pointer hover:bg-red-900/30 text-red-400';
+        closeItem.textContent = '✕ 关闭面板';
+        closeItem.onclick = () => {
+          if (onClose) onClose(paneId);
+          menu.remove();
+        };
+        menu.appendChild(closeItem);
 
         document.body.appendChild(menu);
         const dismiss = () => { menu.remove(); document.removeEventListener('click', dismiss); };

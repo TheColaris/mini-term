@@ -5,6 +5,7 @@ import type { SplitNode } from '../types';
 interface Props {
   node: SplitNode;
   onSplit?: (paneId: string, direction: 'horizontal' | 'vertical') => void;
+  onClose?: (paneId: string) => void;
 }
 
 // 为 SplitNode 生成稳定的 key
@@ -13,13 +14,14 @@ function getNodeKey(node: SplitNode): string {
   return node.children.map(getNodeKey).join('-');
 }
 
-export function SplitLayout({ node, onSplit }: Props) {
+export function SplitLayout({ node, onSplit, onClose }: Props) {
   if (node.type === 'leaf') {
     return (
       <TerminalInstance
         ptyId={node.pane.ptyId}
         paneId={node.pane.id}
         onSplit={onSplit}
+        onClose={onClose}
       />
     );
   }
@@ -31,7 +33,7 @@ export function SplitLayout({ node, onSplit }: Props) {
     >
       {node.children.map((child) => (
         <Allotment.Pane key={getNodeKey(child)}>
-          <SplitLayout node={child} onSplit={onSplit} />
+          <SplitLayout node={child} onSplit={onSplit} onClose={onClose} />
         </Allotment.Pane>
       ))}
     </Allotment>

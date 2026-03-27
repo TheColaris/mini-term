@@ -11,6 +11,7 @@ import type { AppConfig, PtyStatusChangePayload, PtyExitPayload, PaneStatus } fr
 
 export function App() {
   const aiPanelVisible = useAppStore((s) => s.aiPanelVisible);
+  const toggleAiPanel = useAppStore((s) => s.toggleAiPanel);
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const config = useAppStore((s) => s.config);
   const setConfig = useAppStore((s) => s.setConfig);
@@ -52,6 +53,12 @@ export function App() {
         <span className="opacity-40">|</span>
         <span className="cursor-pointer hover:text-white">终端</span>
         <span className="cursor-pointer hover:text-white">设置</span>
+        <span
+          className={`cursor-pointer hover:text-white ${aiPanelVisible ? 'text-[#7c83ff]' : ''}`}
+          onClick={toggleAiPanel}
+        >
+          🤖 AI
+        </span>
       </div>
 
       {/* 主体三栏 */}

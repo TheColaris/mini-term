@@ -10,7 +10,7 @@ function getTabTitle(tab: TerminalTab): string {
 
 interface Props {
   projectId: string;
-  onNewTab: () => void;
+  onNewTab: (e: React.MouseEvent) => void;
   onCloseTab: (tabId: string) => void;
 }
 
