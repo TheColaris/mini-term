@@ -1,7 +1,10 @@
 mod ai_sessions;
 mod config;
 mod fs;
+mod process_monitor;
 mod pty;
+
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -10,6 +13,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(pty::PtyManager::new())
         .manage(fs::FsWatcherManager::new())
+        .setup(|app| {
+            let pty_manager = app.state::<crate::pty::PtyManager>();
+            let pty_clone = pty_manager.inner().clone();
+            process_monitor::start_monitor(app.handle().clone(), pty_clone);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             config::load_config,
             config::save_config,
