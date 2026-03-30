@@ -90,7 +90,7 @@ fn read_claude_session_info(path: &Path) -> (String, String) {
 
     let reader = BufReader::new(file);
 
-    for line in reader.lines().take(30) {
+    for line in reader.lines().take(50) {
         let line = match line {
             Ok(l) => l,
             Err(_) => continue,
@@ -124,6 +124,12 @@ fn read_claude_session_info(path: &Path) -> (String, String) {
         } else {
             "Untitled".into()
         };
+
+        // 跳过系统注入消息（如 /clear 等本地命令产生的 <local-command-caveat> 等）
+        let trimmed = content.trim_start();
+        if trimmed.starts_with('<') {
+            continue;
+        }
 
         // 截断到 100 字符
         let title: String = content.chars().take(100).collect();
@@ -215,7 +221,7 @@ fn walk_codex_sessions(
     }
 }
 
-/// 读取 Codex session 文件前几行，匹配 cwd 后返回 AiSession
+/// 读取 Codex session 文件，匹配 cwd 后返回 AiSession
 fn try_read_codex_session(
     path: &Path,
     normalized_project: &str,
@@ -224,7 +230,13 @@ fn try_read_codex_session(
     let file = fs::File::open(path).ok()?;
     let reader = BufReader::new(file);
 
-    for line in reader.lines().take(5) {
+    let mut matched_id = None;
+    let mut matched_timestamp = String::new();
+
+    let mut lines_iter = reader.lines();
+
+    // 第一遍：前 5 行找 session_meta，匹配 cwd
+    for line in (&mut lines_iter).take(5) {
         let line = line.ok()?;
         let obj: serde_json::Value = serde_json::from_str(&line).ok()?;
 
@@ -241,33 +253,82 @@ fn try_read_codex_session(
             return None;
         }
 
-        let id = obj
-            .pointer("/payload/id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        matched_id = Some(
+            obj.pointer("/payload/id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        );
 
-        let timestamp = obj
+        matched_timestamp = obj
             .pointer("/payload/timestamp")
             .or_else(|| obj.get("timestamp"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
-        let title = thread_names
-            .get(&id)
-            .cloned()
-            .unwrap_or_else(|| "Untitled".into());
-
-        return Some(AiSession {
-            id,
-            session_type: "codex".to_string(),
-            title,
-            timestamp,
-        });
+        break;
     }
 
-    None
+    let id = matched_id?;
+
+    // 先查 session_index 中的 thread_name
+    let mut title = thread_names.get(&id).cloned().unwrap_or_default();
+
+    // 如果 thread_name 为空，从后续行中找第一条真实用户消息
+    if title.is_empty() {
+        for line in lines_iter.take(30) {
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
+            let obj: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            if obj.get("type").and_then(|t| t.as_str()) != Some("response_item") {
+                continue;
+            }
+            if obj.pointer("/payload/role").and_then(|v| v.as_str()) != Some("user") {
+                continue;
+            }
+
+            // 遍历 content blocks，找第一个非系统注入的 text
+            if let Some(arr) = obj.pointer("/payload/content").and_then(|v| v.as_array()) {
+                for item in arr {
+                    if item.get("type").and_then(|t| t.as_str()) != Some("input_text") {
+                        continue;
+                    }
+                    let text = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
+                    let trimmed = text.trim_start();
+                    if !trimmed.is_empty()
+                        && !trimmed.starts_with('<')
+                        && !trimmed.starts_with("# AGENTS.md")
+                    {
+                        title = trimmed.chars().take(100).collect();
+                        break;
+                    }
+                }
+            }
+            if !title.is_empty() {
+                break;
+            }
+        }
+
+        if title.is_empty() {
+            title = "Untitled".into();
+        }
+    }
+
+    let timestamp = matched_timestamp;
+
+    Some(AiSession {
+        id,
+        session_type: "codex".to_string(),
+        title,
+        timestamp,
+    })
 }
 
 // ─── Tauri Command ─────────────────────────────────────────────
