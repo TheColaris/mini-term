@@ -31,4 +31,5 @@ windows = { version = "0.58", features = [
   "Win32_Foundation",
   "Win32_System_Threading",
 ] }
+tauri-plugin-clipboard-manager = "2.3.2"
 

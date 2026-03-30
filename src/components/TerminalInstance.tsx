@@ -4,10 +4,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAppStore } from '../store';
 import type { PtyOutputPayload, PaneStatus } from '../types';
 import { StatusDot } from './StatusDot';
-import { showContextMenu } from '../utils/contextMenu';
 import { getDraggingTabId } from '../utils/dragState';
 import '@xterm/xterm/css/xterm.css';
 
@@ -104,6 +104,25 @@ export function TerminalInstance({ ptyId, paneId, shellName, status, onSplit, on
     fitAddon.fit();
     termRef.current = term;
     fitAddonRef.current = fitAddon;
+
+    // Ctrl+Shift+C 复制 / Ctrl+Shift+V 粘贴
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown') return true;
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
+        e.preventDefault();
+        const sel = term.getSelection();
+        if (sel) writeText(sel);
+        return false;
+      }
+      if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') {
+        e.preventDefault();
+        readText().then((text) => {
+          if (text) invoke('write_pty', { ptyId, data: text });
+        });
+        return false;
+      }
+      return true;
+    });
 
     invoke('resize_pty', { ptyId, cols: term.cols, rows: term.rows });
 
@@ -254,17 +273,6 @@ export function TerminalInstance({ ptyId, paneId, shellName, status, onSplit, on
           if (filePath) {
             invoke('write_pty', { ptyId, data: filePath });
           }
-        }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          if (!paneId || !onSplit) return;
-
-          showContextMenu(e.clientX, e.clientY, [
-            { label: '向右分屏', onClick: () => onSplit(paneId, 'horizontal') },
-            { label: '向下分屏', onClick: () => onSplit(paneId, 'vertical') },
-            { separator: true },
-            { label: '关闭面板', danger: true, onClick: () => onClose?.(paneId) },
-          ]);
         }}
       >
         {/* xterm.js 渲染容器 */}
