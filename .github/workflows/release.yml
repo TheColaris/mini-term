@@ -13,6 +13,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -27,6 +29,28 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
+      - name: Generate changelog
+        id: changelog
+        shell: bash
+        run: |
+          CURRENT_TAG="${{ github.ref_name }}"
+          PREV_TAG=$(git tag --sort=-v:refname | grep '^v' | sed -n '2p')
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="$CURRENT_TAG"
+          else
+            RANGE="${PREV_TAG}..${CURRENT_TAG}"
+          fi
+          LOGS=$(git log "$RANGE" --pretty=format:"- %s" --no-merges)
+          # write to GITHUB_OUTPUT using delimiter
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "## 更新内容"
+            echo ""
+            echo "$LOGS"
+            echo ""
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -37,6 +61,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Mini-Term ${{ github.ref_name }}
-          releaseBody: 'See the assets below to download the installer.'
+          releaseBody: ${{ steps.changelog.outputs.body }}
           releaseDraft: false
           prerelease: false
