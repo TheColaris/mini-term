@@ -12,6 +12,7 @@ import { getDraggingTabId } from '../utils/dragState';
 import '@xterm/xterm/css/xterm.css';
 
 type DropZone = 'top' | 'bottom' | 'left' | 'right';
+type DragKind = 'file' | 'tab';
 
 function getDropZone(rect: DOMRect, clientX: number, clientY: number): DropZone {
   const x = (clientX - rect.left) / rect.width;
@@ -45,7 +46,7 @@ export function TerminalInstance({ ptyId, paneId, shellName, status, onSplit, on
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  const [dragOver, setDragOver] = useState(false);
+  const [dragKind, setDragKind] = useState<DragKind | null>(null);
   const [tabDropZone, setTabDropZone] = useState<DropZone | null>(null);
   const terminalFontSize = useAppStore((s) => s.config.terminalFontSize);
 
@@ -187,7 +188,50 @@ export function TerminalInstance({ ptyId, paneId, shellName, status, onSplit, on
     }
   }, [terminalFontSize]);
 
-  const isTabDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('application/tab-id');
+  const isTabDrag = (e: React.DragEvent<HTMLDivElement>) => e.dataTransfer.types.includes('application/tab-id');
+  const clearDragState = () => {
+    setDragKind(null);
+    setTabDropZone(null);
+  };
+  const handleDragMove = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+
+    if (isTabDrag(e)) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      setDragKind('tab');
+      setTabDropZone(getDropZone(rect, e.clientX, e.clientY));
+      return;
+    }
+
+    setDragKind('file');
+    setTabDropZone(null);
+  };
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+
+    const currentDragKind = dragKind ?? (isTabDrag(e) ? 'tab' : 'file');
+    clearDragState();
+
+    if (currentDragKind === 'tab' && paneId && onTabDrop) {
+      const tabId = getDraggingTabId();
+      if (tabId) {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const zone = getDropZone(rect, e.clientX, e.clientY);
+        const direction: 'horizontal' | 'vertical' =
+          zone === 'left' || zone === 'right' ? 'horizontal' : 'vertical';
+        const position: 'before' | 'after' =
+          zone === 'left' || zone === 'top' ? 'before' : 'after';
+        onTabDrop(tabId, paneId, direction, position);
+        return;
+      }
+    }
+
+    const filePath = e.dataTransfer.getData('text/plain').trim();
+    if (filePath) {
+      invoke('write_pty', { ptyId, data: filePath });
+      termRef.current?.focus();
+    }
+  };
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -232,59 +276,24 @@ export function TerminalInstance({ ptyId, paneId, shellName, status, onSplit, on
       {/* 终端内容区 */}
       <div
         className="flex-1 relative bg-[#100f0d]"
-        onDragEnter={(e) => {
-          e.preventDefault();
-          if (isTabDrag(e)) {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setTabDropZone(getDropZone(rect, e.clientX, e.clientY));
-          } else {
-            setDragOver(true);
+        onDragEnterCapture={handleDragMove}
+        onDragOverCapture={(e) => {
+          handleDragMove(e);
+          e.dataTransfer.dropEffect = isTabDrag(e) ? 'move' : 'copy';
+        }}
+        onDragLeaveCapture={(e) => {
+          const nextTarget = e.relatedTarget as Node | null;
+          if (!nextTarget || !e.currentTarget.contains(nextTarget)) {
+            clearDragState();
           }
         }}
-        onDragOver={(e) => {
-          e.preventDefault();
-          if (isTabDrag(e)) {
-            e.dataTransfer.dropEffect = 'move';
-            const rect = e.currentTarget.getBoundingClientRect();
-            setTabDropZone(getDropZone(rect, e.clientX, e.clientY));
-          } else {
-            e.dataTransfer.dropEffect = 'copy';
-          }
-        }}
-        onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-            setDragOver(false);
-            setTabDropZone(null);
-          }
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          setTabDropZone(null);
-
-          const tabId = getDraggingTabId();
-          if (tabId && paneId && onTabDrop) {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const zone = getDropZone(rect, e.clientX, e.clientY);
-            const direction: 'horizontal' | 'vertical' =
-              zone === 'left' || zone === 'right' ? 'horizontal' : 'vertical';
-            const position: 'before' | 'after' =
-              zone === 'left' || zone === 'top' ? 'before' : 'after';
-            onTabDrop(tabId, paneId, direction, position);
-            return;
-          }
-
-          const filePath = e.dataTransfer.getData('text/plain');
-          if (filePath) {
-            invoke('write_pty', { ptyId, data: filePath });
-          }
-        }}
+        onDropCapture={handleDrop}
       >
         {/* xterm.js 渲染容器 */}
         <div ref={containerRef} className="absolute top-1.5 bottom-0 left-2.5 right-0 cursor-none" />
 
         {/* 文件拖拽视觉提示 */}
-        {dragOver && (
+        {dragKind === 'file' && (
           <div
             className="absolute inset-1 z-10 flex items-center justify-center pointer-events-none rounded-[var(--radius-md)]"
             style={{ background: 'rgba(200, 128, 90, 0.06)', border: '2px dashed var(--accent)' }}
