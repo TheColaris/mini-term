@@ -7,6 +7,7 @@ import { useAppStore, genId, getOrderedItems } from '../store';
 import { StatusDot } from './StatusDot';
 import { SessionList } from './SessionList';
 import { showContextMenu } from '../utils/contextMenu';
+import { showPrompt } from '../utils/prompt';
 import { setDragPayload, getDragPayload } from '../utils/dragState';
 import type { PaneStatus, SplitNode, ProjectConfig, ProjectGroup } from '../types';
 
@@ -87,8 +88,8 @@ export function ProjectList() {
   };
 
   // 创建分组
-  const handleCreateGroup = useCallback(() => {
-    const name = window.prompt('输入分组名称');
+  const handleCreateGroup = useCallback(async () => {
+    const name = await showPrompt('新建分组', '请输入分组名称');
     if (!name?.trim()) return;
     createGroup(name.trim());
     saveConfig();
