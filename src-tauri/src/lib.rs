@@ -1,6 +1,7 @@
 mod ai_sessions;
 mod config;
 mod fs;
+mod git;
 mod process_monitor;
 mod pty;
 
@@ -33,6 +34,8 @@ pub fn run() {
             fs::create_file,
             fs::create_directory,
             ai_sessions::get_ai_sessions,
+            git::get_git_status,
+            git::get_git_diff,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
