@@ -23,6 +23,7 @@ export interface ProjectConfig {
   name: string;
   path: string;
   savedLayout?: SavedProjectLayout;
+  expandedDirs?: string[];
 }
 
 export interface ShellConfig {

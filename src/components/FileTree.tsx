@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
-import { useAppStore } from '../store';
+import { useAppStore, isExpanded, toggleExpandedDir } from '../store';
 import { useTauriEvent } from '../hooks/useTauriEvent';
 import { showContextMenu } from '../utils/contextMenu';
 import { showPrompt } from '../utils/prompt';
@@ -32,7 +32,10 @@ function getRelativePath(targetPath: string, rootPath: string) {
 }
 
 function TreeNode({ entry, projectRoot, depth, gitStatusMap, onViewDiff, onViewFile }: TreeNodeProps) {
-  const [expanded, setExpanded] = useState(false);
+  const activeProjectId = useAppStore((s) => s.activeProjectId);
+  const [expanded, setExpanded] = useState(() =>
+    activeProjectId ? isExpanded(activeProjectId, entry.path) : false
+  );
   const [children, setChildren] = useState<FileEntry[]>([]);
 
   const loadChildren = useCallback(async () => {
@@ -42,6 +45,14 @@ function TreeNode({ entry, projectRoot, depth, gitStatusMap, onViewDiff, onViewF
     });
     setChildren(entries);
   }, [entry.path, projectRoot]);
+
+  // 恢复时自动加载子节点并注册监听
+  useEffect(() => {
+    if (expanded && entry.isDir) {
+      loadChildren();
+      invoke('watch_directory', { path: entry.path, projectPath: projectRoot });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleToggle = useCallback(async () => {
     if (!entry.isDir) {
@@ -54,14 +65,18 @@ function TreeNode({ entry, projectRoot, depth, gitStatusMap, onViewDiff, onViewF
       }
       return;
     }
-    if (!expanded) {
+    const next = !expanded;
+    if (next) {
       await loadChildren();
       invoke('watch_directory', { path: entry.path, projectPath: projectRoot });
     } else {
       invoke('unwatch_directory', { path: entry.path });
     }
-    setExpanded(!expanded);
-  }, [entry, expanded, loadChildren, projectRoot, gitStatusMap, onViewDiff]);
+    setExpanded(next);
+    if (activeProjectId) {
+      toggleExpandedDir(activeProjectId, entry.path, next);
+    }
+  }, [entry, expanded, loadChildren, projectRoot, gitStatusMap, onViewDiff, onViewFile, activeProjectId]);
 
   useTauriEvent<FsChangePayload>('fs-change', useCallback((payload: FsChangePayload) => {
     if (expanded && payload.path.startsWith(entry.path)) {

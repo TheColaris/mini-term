@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Allotment } from 'allotment';
 import { invoke } from '@tauri-apps/api/core';
-import { useAppStore, restoreLayout, flushLayoutToConfig } from './store';
+import { useAppStore, restoreLayout, flushLayoutToConfig, initExpandedDirs, flushExpandedDirsToConfig } from './store';
 import { TerminalArea } from './components/TerminalArea';
 import { ProjectList } from './components/ProjectList';
 import { FileTree } from './components/FileTree';
@@ -35,6 +35,11 @@ export function App() {
         activeProjectId: cfg.projects[0]?.id ?? null,
       });
 
+      // 恢复各项目的展开目录状态
+      for (const p of cfg.projects) {
+        initExpandedDirs(p.id, p.expandedDirs ?? []);
+      }
+
       // 异步恢复各项目的终端布局（不阻塞 UI，恢复完成后 store 自动更新）
       Promise.all(
         cfg.projects
@@ -60,6 +65,7 @@ export function App() {
       const { activeProjectId } = useAppStore.getState();
       if (activeProjectId) {
         flushLayoutToConfig(activeProjectId);
+        flushExpandedDirsToConfig(activeProjectId);
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -71,6 +77,7 @@ export function App() {
   useEffect(() => {
     if (prevProjectRef.current && prevProjectRef.current !== activeProjectId) {
       flushLayoutToConfig(prevProjectRef.current);
+      flushExpandedDirsToConfig(prevProjectRef.current);
     }
     prevProjectRef.current = activeProjectId;
   }, [activeProjectId]);
@@ -111,7 +118,7 @@ export function App() {
           </Allotment.Pane>
 
           <Allotment.Pane minSize={180}>
-            <FileTree />
+            <FileTree key={activeProjectId} />
           </Allotment.Pane>
 
           <Allotment.Pane>

@@ -144,6 +144,65 @@ export async function restoreLayout(
   });
 }
 
+// 每个项目的展开目录集合（运行时状态）
+const expandedDirsMap = new Map<string, Set<string>>();
+
+export function initExpandedDirs(projectId: string, dirs: string[]) {
+  expandedDirsMap.set(projectId, new Set(dirs));
+}
+
+export function isExpanded(projectId: string, path: string): boolean {
+  return expandedDirsMap.get(projectId)?.has(path) ?? false;
+}
+
+export function toggleExpandedDir(projectId: string, path: string, expanded: boolean) {
+  let set = expandedDirsMap.get(projectId);
+  if (!set) {
+    set = new Set();
+    expandedDirsMap.set(projectId, set);
+  }
+  if (expanded) {
+    set.add(path);
+  } else {
+    set.delete(path);
+  }
+  saveExpandedDirsToConfig(projectId);
+}
+
+// 保存展开目录到配置（防抖）
+const saveExpandedTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function doSaveExpandedDirs(projectId: string) {
+  const { config } = useAppStore.getState();
+  const dirs = Array.from(expandedDirsMap.get(projectId) ?? []);
+  const newConfig = {
+    ...config,
+    projects: config.projects.map((p) =>
+      p.id === projectId ? { ...p, expandedDirs: dirs } : p
+    ),
+  };
+  useAppStore.getState().setConfig(newConfig);
+  invoke('save_config', { config: newConfig });
+}
+
+function saveExpandedDirsToConfig(projectId: string) {
+  const existing = saveExpandedTimers.get(projectId);
+  if (existing) clearTimeout(existing);
+  saveExpandedTimers.set(projectId, setTimeout(() => {
+    saveExpandedTimers.delete(projectId);
+    doSaveExpandedDirs(projectId);
+  }, 500));
+}
+
+export function flushExpandedDirsToConfig(projectId: string) {
+  const existing = saveExpandedTimers.get(projectId);
+  if (existing) {
+    clearTimeout(existing);
+    saveExpandedTimers.delete(projectId);
+  }
+  doSaveExpandedDirs(projectId);
+}
+
 // 每个项目独立的防抖 timer
 const saveLayoutTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -303,6 +362,11 @@ export const useAppStore = create<AppStore>((set) => ({
 
   removeProject: (id) =>
     set((state) => {
+      // 清理展开目录状态
+      expandedDirsMap.delete(id);
+      const timer = saveExpandedTimers.get(id);
+      if (timer) { clearTimeout(timer); saveExpandedTimers.delete(id); }
+
       const newConfig = {
         ...state.config,
         projects: state.config.projects.filter((p) => p.id !== id),

@@ -70,6 +70,8 @@ pub struct ProjectConfig {
     pub path: String,
     #[serde(default)]
     pub saved_layout: Option<SavedProjectLayout>,
+    #[serde(default)]
+    pub expanded_dirs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
