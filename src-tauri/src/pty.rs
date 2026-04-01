@@ -30,6 +30,13 @@ struct PtyInstance {
 
 const AI_COMMANDS: &[&str] = &["claude", "codex"];
 
+/// 这些标志表示非交互命令（仅输出信息后退出），不应触发 AI 会话状态
+const NON_INTERACTIVE_FLAGS: &[&str] = &[
+    "-v", "--version",
+    "-h", "--help",
+    "-p", "--print",
+];
+
 #[derive(Clone)]
 pub struct PtyManager {
     instances: Arc<Mutex<HashMap<u32, PtyInstance>>>,
@@ -90,13 +97,18 @@ impl PtyManager {
                             }
                         } else if !cmd.is_empty() {
                             // 非 AI 会话：检测 AI 命令启动
-                            let first_word = cmd.split_whitespace().next().unwrap_or("");
-                            let is_ai = AI_COMMANDS.iter().any(|&ai| {
+                            let mut words = cmd.split_whitespace();
+                            let first_word = words.next().unwrap_or("");
+                            let is_ai_cmd = AI_COMMANDS.iter().any(|&ai| {
                                 first_word == ai
                                     || first_word.ends_with(&format!("/{ai}"))
                                     || first_word.ends_with(&format!("\\{ai}"))
                             });
-                            if is_ai { enter_ai = true; }
+                            // 排除带有非交互标志的命令（如 claude -v, codex --help）
+                            let has_non_interactive_flag = is_ai_cmd && words.any(|w| {
+                                NON_INTERACTIVE_FLAGS.iter().any(|&f| w == f)
+                            });
+                            if is_ai_cmd && !has_non_interactive_flag { enter_ai = true; }
                         }
                         buf.clear();
                     }
@@ -335,10 +347,52 @@ mod tests {
     }
 
     #[test]
-    fn claude_with_args() {
+    fn claude_with_interactive_args() {
         let mgr = PtyManager::new();
-        mgr.track_input(1, "claude -p hi\r");
+        mgr.track_input(1, "claude --model opus\r");
         assert!(mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn claude_version_not_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude -v\r");
+        assert!(!mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn claude_long_version_not_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude --version\r");
+        assert!(!mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn claude_help_not_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude -h\r");
+        assert!(!mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn claude_print_not_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude -p \"hello\"\r");
+        assert!(!mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn codex_version_not_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "codex --version\r");
+        assert!(!mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn codex_help_not_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "codex --help\r");
+        assert!(!mgr.is_ai_session(1));
     }
 
     #[test]
