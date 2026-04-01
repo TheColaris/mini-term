@@ -138,7 +138,7 @@ export function App() {
               <Allotment.Pane minSize={150}>
                 <FileTree key={activeProjectId} />
               </Allotment.Pane>
-              <Allotment.Pane minSize={100}>
+              <Allotment.Pane minSize={36}>
                 <GitHistory key={activeProjectId} />
               </Allotment.Pane>
             </Allotment>

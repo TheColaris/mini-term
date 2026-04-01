@@ -199,8 +199,8 @@ export function GitHistory() {
 
   return (
     <div className="h-full bg-[var(--bg-surface)] flex flex-col border-t border-[var(--border-subtle)]">
-      <div className="flex items-center justify-between px-3 pt-3 pb-1.5">
-        <span className="text-sm text-[var(--text-muted)] uppercase tracking-[0.12em] font-medium">
+      <div className="flex items-center justify-between px-3 pt-3 pb-1.5 flex-shrink-0">
+        <span className="text-sm text-[var(--text-muted)] uppercase tracking-[0.12em] font-medium select-none">
           Git History
         </span>
         <button
