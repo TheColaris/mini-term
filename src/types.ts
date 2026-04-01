@@ -1,15 +1,19 @@
 // === 配置持久化 ===
 
+export type ProjectTreeItem = string | ProjectGroup;
+
 export interface ProjectGroup {
   id: string;
   name: string;
   collapsed: boolean;
-  projectIds: string[];
+  children: ProjectTreeItem[];
 }
 
 export interface AppConfig {
   projects: ProjectConfig[];
-  projectGroups?: ProjectGroup[];
+  projectTree?: ProjectTreeItem[];
+  // 旧字段仅用于迁移兼容（Rust 端处理后不再出现）
+  projectGroups?: { id: string; name: string; collapsed: boolean; projectIds: string[] }[];
   projectOrdering?: string[];
   defaultShell: string;
   availableShells: ShellConfig[];
