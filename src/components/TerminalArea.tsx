@@ -4,6 +4,7 @@ import { useAppStore, genId, collectPtyIds, saveLayoutToConfig } from '../store'
 import { TabBar } from './TabBar';
 import { SplitLayout } from './SplitLayout';
 import { showContextMenu } from '../utils/contextMenu';
+import { disposeTerminal } from '../utils/terminalCache';
 import type { TerminalTab, PaneState, SplitNode, ShellConfig } from '../types';
 
 interface Props {
@@ -87,6 +88,7 @@ export function TerminalArea({ projectId, projectPath }: Props) {
       const ptyIds = collectPtyIds(tab.splitLayout);
       for (const id of ptyIds) {
         await invoke('kill_pty', { ptyId: id });
+        disposeTerminal(id);
       }
     }
     removeTab(projectId, tabId);
@@ -203,6 +205,7 @@ export function TerminalArea({ projectId, projectPath }: Props) {
     const ptyId = findPty(currentTab.splitLayout);
     if (ptyId !== null) {
       await invoke('kill_pty', { ptyId });
+      disposeTerminal(ptyId);
     }
 
     // await 之后重新读取最新状态，防止并发关闭时布局被覆盖

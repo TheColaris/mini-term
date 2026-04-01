@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
-import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAppStore } from '../store';
-import type { PtyOutputPayload, PaneStatus } from '../types';
+import type { PaneStatus } from '../types';
 import { StatusDot } from './StatusDot';
 import { getDraggingTabId } from '../utils/dragState';
+import { getOrCreateTerminal, getCachedTerminal } from '../utils/terminalCache';
 import '@xterm/xterm/css/xterm.css';
 
 type DropZone = 'top' | 'bottom' | 'left' | 'right';
@@ -44,149 +40,66 @@ interface Props {
 
 export function TerminalInstance({ ptyId, paneId, shellName, status, onSplit, onClose, onTabDrop }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
   const [dragKind, setDragKind] = useState<DragKind | null>(null);
   const [tabDropZone, setTabDropZone] = useState<DropZone | null>(null);
   const terminalFontSize = useAppStore((s) => s.config.terminalFontSize);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    const term = new Terminal({
-      fontSize: useAppStore.getState().config.terminalFontSize ?? 14,
-      fontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
-      fontWeight: '400',
-      fontWeightBold: '600',
-      cursorBlink: true,
-      cursorStyle: 'bar',
-      cursorWidth: 2,
-      scrollback: 5000,
-      letterSpacing: 0,
-      lineHeight: 1.35,
-      theme: {
-        background: '#100f0d',
-        foreground: '#d8d4cc',
-        cursor: '#c8805a',
-        cursorAccent: '#100f0d',
-        selectionBackground: '#c8805a30',
-        selectionForeground: '#e5e0d8',
-        black: '#2a2824',
-        red: '#d4605a',
-        green: '#6bb87a',
-        yellow: '#d4a84a',
-        blue: '#6896c8',
-        magenta: '#b08cd4',
-        cyan: '#7dcfb8',
-        white: '#d8d4cc',
-        brightBlack: '#5c5850',
-        brightRed: '#e07060',
-        brightGreen: '#80d090',
-        brightYellow: '#e0b860',
-        brightBlue: '#80aad8',
-        brightMagenta: '#c0a0e0',
-        brightCyan: '#90e0c8',
-        brightWhite: '#e5e0d8',
-      },
-    });
+    const { term, fitAddon, wrapper } = getOrCreateTerminal(ptyId);
 
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(containerRef.current);
+    // 将 wrapper 附着到当前容器
+    container.appendChild(wrapper);
 
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        webgl.dispose();
-        // 强制用 Canvas 渲染器刷新，消除 WebGL→Canvas 降级时的白屏
+    // 首次挂载或重新挂载后 fit + 同步 PTY 尺寸
+    requestAnimationFrame(() => {
+      if (container.clientWidth > 0 && container.clientHeight > 0) {
+        fitAddon.fit();
+        invoke('resize_pty', { ptyId, cols: term.cols, rows: term.rows });
+        // 强制重绘，修复 WebGL 上下文在 DOM 移动后可能的渲染问题
         term.refresh(0, term.rows - 1);
-      });
-      term.loadAddon(webgl);
-    } catch {
-      // WebGL 不支持时回退到 Canvas
-    }
-
-    fitAddon.fit();
-    termRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    // Ctrl+Shift+C 复制 / Ctrl+Shift+V 粘贴
-    term.attachCustomKeyEventHandler((e) => {
-      if (e.type !== 'keydown') return true;
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
-        e.preventDefault();
-        const sel = term.getSelection();
-        if (sel) writeText(sel);
-        return false;
       }
-      if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') {
-        e.preventDefault();
-        readText().then((text) => {
-          if (text) invoke('write_pty', { ptyId, data: text });
-        });
-        return false;
-      }
-      return true;
     });
 
-    invoke('resize_pty', { ptyId, cols: term.cols, rows: term.rows });
-
-    const onDataDisposable = term.onData((data) => {
-      term.scrollToBottom();
-      invoke('write_pty', { ptyId, data });
-    });
-
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    listen<PtyOutputPayload>('pty-output', (event) => {
-      if (event.payload.ptyId === ptyId) {
-        term.write(event.payload.data);
-      }
-    }).then((fn) => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
-
-    const onResizeDisposable = term.onResize(({ cols, rows }) => {
-      invoke('resize_pty', { ptyId, cols, rows });
-    });
-
+    // 容器尺寸变化时自适应
     let rafId: number;
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => fitAddon.fit());
+      rafId = requestAnimationFrame(() => {
+        if (container.clientWidth > 0 && container.clientHeight > 0) {
+          fitAddon.fit();
+        }
+      });
     });
-    observer.observe(containerRef.current);
+    observer.observe(container);
 
-    // 检测 display:none→block 可见性变化，触发 fit 重算尺寸
+    // 检测 display:none→block 可见性变化
     const visibilityObserver = new IntersectionObserver((entries) => {
       if (entries.some((e) => e.isIntersecting)) {
         requestAnimationFrame(() => fitAddon.fit());
       }
     });
-    visibilityObserver.observe(containerRef.current);
+    visibilityObserver.observe(container);
 
     return () => {
-      cancelled = true;
-      unlisten?.();
       cancelAnimationFrame(rafId);
       observer.disconnect();
       visibilityObserver.disconnect();
-      onDataDisposable.dispose();
-      onResizeDisposable.dispose();
-      term.dispose();
+      // 仅分离 wrapper，不销毁 Terminal（分屏重排时保留内容）
+      wrapper.remove();
     };
   }, [ptyId]);
 
   // 动态更新终端字体大小
   useEffect(() => {
-    const term = termRef.current;
-    const fitAddon = fitAddonRef.current;
-    if (term && terminalFontSize) {
-      term.options.fontSize = terminalFontSize;
-      fitAddon?.fit();
+    const cached = getCachedTerminal(ptyId);
+    if (cached && terminalFontSize) {
+      cached.term.options.fontSize = terminalFontSize;
+      cached.fitAddon.fit();
     }
-  }, [terminalFontSize]);
+  }, [terminalFontSize, ptyId]);
 
   const isTabDrag = (e: React.DragEvent<HTMLDivElement>) => e.dataTransfer.types.includes('application/tab-id');
   const clearDragState = () => {
@@ -228,8 +141,9 @@ export function TerminalInstance({ ptyId, paneId, shellName, status, onSplit, on
 
     const filePath = e.dataTransfer.getData('text/plain').trim();
     if (filePath) {
+      const cached = getCachedTerminal(ptyId);
       invoke('write_pty', { ptyId, data: filePath });
-      termRef.current?.focus();
+      cached?.term.focus();
     }
   };
 
