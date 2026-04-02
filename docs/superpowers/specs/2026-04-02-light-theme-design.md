@@ -11,7 +11,7 @@
 | 切换方式 | 跟随系统 + 手动覆盖 |
 | 浅色风格 | Pure White — 纯白/灰背景，铜色强调色保留 |
 | 终端行为 | 用户可选：跟随主题 or 始终深色 |
-| UI 入口 | 设置面板（TerminalConfigModal） |
+| UI 入口 | 设置面板（SettingsModal） |
 | 过渡动画 | CSS transition 200-300ms 平滑过渡 |
 | 语义颜色 | 浅色下适度加深以保证对比度 |
 
@@ -39,6 +39,14 @@ CSS: :root (深色默认) / :root[data-theme="light"] (浅色覆盖)
 xterm 根据 resolvedTheme + terminalFollowTheme 选择色板
 ```
 
+### 防闪烁策略
+
+由于 Tauri 的 `invoke('load_config')` 是异步的，首次渲染前可能出现主题跳变。解决方案：
+
+1. 在 `index.html` 中内联一段同步脚本，从 `localStorage` 读取缓存的主题值并立即设置 `data-theme`
+2. themeManager 初始化后同步更新 `localStorage` 缓存，确保下次启动可用
+3. 利用现有 `configLoaded` 状态，在 config 加载完成前不渲染主体内容（已有此机制）
+
 ## 配色方案
 
 ### 深色 Warm Carbon（现有，不变）
@@ -65,6 +73,13 @@ xterm 根据 resolvedTheme + terminalFollowTheme 选择色板
 | `--color-ai` | `#b08cd4` |
 | `--color-file` | `#7dcfb8` |
 | `--color-folder` | `#d4c8a0` |
+| `--diff-add-bg` | `rgba(60,180,60,0.12)` |
+| `--diff-del-bg` | `rgba(220,60,60,0.12)` |
+| `--diff-add-text` | `#6bb87a` |
+| `--diff-del-text` | `#d4605a` |
+| `--color-info` | `#6896c8` |
+| `--shadow-overlay` | `0 8px 32px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.05)` |
+| `--color-error-muted` | `rgba(212, 96, 90, 0.15)` |
 
 ### 浅色 Pure White（新增）
 
@@ -90,6 +105,13 @@ xterm 根据 resolvedTheme + terminalFollowTheme 选择色板
 | `--color-ai` | `#8a5cb8` |
 | `--color-file` | `#1a8a6a` |
 | `--color-folder` | `#8a7a40` |
+| `--diff-add-bg` | `rgba(40,140,40,0.10)` |
+| `--diff-del-bg` | `rgba(200,50,40,0.10)` |
+| `--diff-add-text` | `#2d8a46` |
+| `--diff-del-text` | `#c0392b` |
+| `--color-info` | `#2860a0` |
+| `--shadow-overlay` | `0 8px 32px rgba(0,0,0,0.15), 0 0 1px rgba(0,0,0,0.08)` |
+| `--color-error-muted` | `rgba(192, 57, 43, 0.12)` |
 
 ### xterm 浅色终端色板
 
@@ -132,9 +154,19 @@ xterm 根据 resolvedTheme + terminalFollowTheme 选择色板
 ### CSS
 
 **`src/styles.css`**
-- `:root` 添加 `transition` 属性用于平滑过渡
 - 新增 `:root[data-theme="light"] { ... }` 块，覆盖所有 CSS 变量为浅色值
-- 检查并调整滚动条、上下文菜单、prompt 对话框等在浅色下的表现
+- 深色 `:root` 中新增 `--diff-add-bg`、`--diff-del-bg`、`--diff-add-text`、`--diff-del-text`、`--shadow-overlay` 变量
+- 滚动条 thumb 改用 `var(--border-default)` / `var(--border-strong)` 替代硬编码 `rgba(255,255,255,...)`
+- 上下文菜单 `.ctx-menu` 的 `background` 和 `box-shadow` 改用 CSS 变量
+- `.ctx-menu-item.danger:hover` 的 `rgba(212, 96, 90, 0.15)` 改用 `var(--color-error-muted)`
+- `.prompt-dialog` 的 `box-shadow` 改用 `var(--shadow-overlay)`
+- 噪声纹理叠加在浅色下降低不透明度
+- Allotment 分割线颜色改用 `var(--border-subtle)`
+
+### HTML
+
+**`index.html`**
+- 内联同步脚本：从 `localStorage` 读取缓存主题值，立即设置 `data-theme`，防止启动闪烁
 
 ### TypeScript 类型
 
@@ -149,6 +181,7 @@ xterm 根据 resolvedTheme + terminalFollowTheme 选择色板
 - `applyTheme(theme, terminalFollowTheme)` — 主入口
 - 内部监听 `matchMedia('(prefers-color-scheme: light)')` 的 `change` 事件
 - 计算 `resolvedTheme` 并设置 `document.documentElement.dataset.theme`
+- 同步更新 `localStorage` 缓存主题值
 - 导出 `getResolvedTheme()` 供终端和其他组件查询当前实际主题
 - 返回清理函数用于解除监听
 
@@ -166,12 +199,14 @@ xterm 根据 resolvedTheme + terminalFollowTheme 选择色板
 **`src/components/TerminalInstance.tsx`**
 - 监听主题变更，动态更新已有终端实例的 `terminal.options.theme`
 - 移除硬编码 `bg-[#100f0d]`，改用 `bg-[var(--bg-terminal)]`
+- 拖拽区域 `rgba(200, 128, 90, 0.06)` 改用 `var(--accent-subtle)`
 
 ### 设置面板
 
-**`src/components/TerminalConfigModal.tsx`**
-- 新增"主题模式"区域：三选一按钮（深色 / 浅色 / 跟随系统）
-- 新增"终端跟随主题"开关
+**`src/components/SettingsModal.tsx`**
+- 在 `SystemSettings` 子页面（或新增 `ThemeSettings` 区块）中新增：
+  - "主题模式"：三选一按钮（深色 / 浅色 / 跟随系统）
+  - "终端跟随主题"：开关
 
 ### 组件硬编码修复
 
@@ -185,28 +220,48 @@ xterm 根据 resolvedTheme + terminalFollowTheme 选择色板
 - AI 类型徽标颜色改用 CSS 变量
 
 **`src/components/CommitDiffModal.tsx`**
-- diff 状态标签颜色改用 CSS 变量
+- diff 状态标签颜色改用 CSS 变量：
+  - added: `text-green-400` → `text-[var(--color-success)]`
+  - modified: `text-amber-400` → `text-[var(--color-warning)]`
+  - deleted: `text-red-400` → `text-[var(--color-error)]`
+  - renamed: `text-blue-400` → `text-[var(--color-info)]`
+
+**`src/components/DiffModal.tsx`**
+- diff 行背景色 `rgba(60,180,60,0.12)` / `rgba(220,60,60,0.12)` 改用 `var(--diff-add-bg)` / `var(--diff-del-bg)`
+- diff 行文字色 `text-green-400` / `text-red-400` 改用 `text-[var(--diff-add-text)]` / `text-[var(--diff-del-text)]`
+
+### Modal 容器阴影
+
+各 Modal 容器（DiffModal、CommitDiffModal、FileViewerModal、ProjectList、SettingsModal）当前使用 Tailwind `shadow-2xl`，需改为 `shadow-[var(--shadow-overlay)]` 以适配深浅主题。
+
+### Modal 遮罩层
+
+各 Modal 的 `bg-black/50` 遮罩在浅色主题下仍可接受（半透明黑在白色上依然有效），**不做修改**。
 
 ## 过渡动画
 
-在 `:root` 上添加：
+对关键容器添加 transition，避免全局通配符选择器的性能问题：
 
 ```css
-:root {
-  transition: background-color 0.25s ease, color 0.25s ease;
-}
-
-:root *,
-:root *::before,
-:root *::after {
-  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+:root,
+body,
+.app-container,
+.sidebar,
+.tab-bar,
+.ctx-menu,
+.prompt-dialog {
+  transition: background-color 0.25s ease, color 0.25s ease,
+              border-color 0.25s ease, box-shadow 0.25s ease;
 }
 ```
 
+**注意**：显式排除 `.xterm` 容器及其子元素，避免干扰终端渲染和 WebGL canvas。xterm 主题通过 JS API 直接切换，不依赖 CSS transition。
+
 ## 边界情况
 
-- **噪声纹理叠加**（`styles.css` 中的 SVG noise）：浅色下需降低不透明度或调整混合模式
+- **噪声纹理叠加**（`styles.css` 中的 SVG noise）：浅色下降低不透明度或调整混合模式
 - **毛玻璃效果**（上下文菜单 `backdrop-filter`）：浅色下 `background` 需改为半透明白
-- **Allotment 分割线**：需在浅色下可见（当前是 `rgba(255,255,255,...)` 形式）
+- **Allotment 分割线**：改用 `var(--border-subtle)` 确保浅色下可见
+- **滚动条**：thumb 颜色从 `rgba(255,255,255,...)` 改为引用 border 变量
 - **系统主题变更**：用户在 Windows 设置中切换深浅时，应用实时响应（`matchMedia` change 事件）
-- **应用启动时**：从 config.json 读取 theme 后，在首次渲染前应用，避免闪烁
+- **应用启动时**：通过 `index.html` 内联脚本 + `localStorage` 缓存防止闪烁
