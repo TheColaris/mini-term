@@ -29,23 +29,27 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 
 ## 预览
 
-<!-- 主界面截图：展示三栏布局（项目列表 | 文件树 | 终端区域） -->
-<!-- ![主界面](docs/screenshots/main.png) -->
-> 截图待补充
+![主界面](docs/screenshots/main.png)
+![设置界面](docs/screenshots/settings.png)
+
 
 ## 功能特性
 
 ### 终端核心
 
 - **多标签管理** — 每个项目独立标签页，拖拽排序，状态图标一目了然
+
 - **递归分屏** — 横向 / 纵向任意嵌套分屏，Allotment 拖拽调整比例
+
 - **高性能渲染** — xterm.js v6 + WebGL 加速，自动降级为 Canvas
+
 - **10 万行滚动缓冲** — 大量日志输出也不丢失
+
 - **终端缓存** — 切换标签 / 分屏不丢失已有内容
+
 - **快捷键** — Ctrl+Shift+C/V 复制粘贴，文件拖拽到终端自动插入路径
 
-<!-- 分屏截图：展示多层嵌套分屏 -->
-<!-- ![分屏布局](docs/screenshots/split.png) -->
+  
 
 ### AI 进程感知
 
@@ -53,8 +57,7 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 - **状态聚合** — 从单个面板 → 标签页 → 项目级别逐层聚合，优先级 `error > ai-working > ai-idle > idle`
 - **会话历史** — 读取本地 Claude / Codex 历史会话记录，右键复制恢复命令快速续接
 
-<!-- AI 状态截图：展示不同状态的 StatusDot -->
-<!-- ![AI 状态](docs/screenshots/ai-status.png) -->
+
 
 ### 项目管理
 
@@ -62,8 +65,7 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 - **嵌套分组** — 最多 3 级项目分组，拖拽排序，折叠 / 展开
 - **文件树** — 集成目录浏览器，自动过滤 `.gitignore` 条目，文件监听实时刷新
 
-<!-- 项目列表截图：展示嵌套分组 -->
-<!-- ![项目管理](docs/screenshots/projects.png) -->
+
 
 ### Git 集成
 
@@ -73,8 +75,7 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 - **提交 Diff** — 查看任意提交的文件变更，支持并排 / 内联两种 Diff 模式
 - **多仓库发现** — 自动扫描项目目录下所有 Git 仓库
 
-<!-- Git 历史截图：展示提交记录和 Diff 查看 -->
-<!-- ![Git 集成](docs/screenshots/git.png) -->
+![Git 集成](docs/screenshots/git.png)
 
 ### 其他
 
@@ -103,7 +104,7 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 
 前往 [Releases](https://github.com/pchaganti/mini-term/releases) 页面下载最新安装包。
 
-> 目前仅支持 Windows 平台。
+> 目前仅支持 Windows、MacOS 平台。
 
 ### 从源码构建
 
