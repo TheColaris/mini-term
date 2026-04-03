@@ -6,7 +6,7 @@ import { useTauriEvent } from '../hooks/useTauriEvent';
 import { showContextMenu } from '../utils/contextMenu';
 import { formatRelativeTime } from '../utils/timeFormat';
 import { CommitDiffModal } from './CommitDiffModal';
-import type { GitRepoInfo, GitCommitInfo, CommitFileInfo, PtyOutputPayload } from '../types';
+import type { GitRepoInfo, GitCommitInfo, CommitFileInfo, BranchInfo, PtyOutputPayload } from '../types';
 
 interface RepoState {
   commits: GitCommitInfo[];
@@ -85,6 +85,9 @@ export function GitHistory() {
     files: CommitFileInfo[];
   } | null>(null);
 
+  // branch name → commit hash 映射（每个 repo 独立）
+  const [repoBranches, setRepoBranches] = useState<Map<string, BranchInfo[]>>(new Map());
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const repoStatesRef = useRef(repoStates);
   repoStatesRef.current = repoStates;
@@ -99,6 +102,19 @@ export function GitHistory() {
   useEffect(() => {
     loadRepos();
   }, [loadRepos]);
+
+  const loadBranches = useCallback(async (repoPath: string) => {
+    try {
+      const branches = await invoke<BranchInfo[]>('get_repo_branches', { repoPath });
+      setRepoBranches((prev) => {
+        const next = new Map(prev);
+        next.set(repoPath, branches);
+        return next;
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const loadCommits = useCallback(
     async (repoPath: string, beforeCommit?: string) => {
@@ -151,11 +167,12 @@ export function GitHistory() {
           if (!repoStatesRef.current.has(repoPath)) {
             loadCommits(repoPath);
           }
+          loadBranches(repoPath);
         }
         return next;
       });
     },
-    [loadCommits],
+    [loadCommits, loadBranches],
   );
 
   const expandedReposRef = useRef(expandedRepos);
@@ -220,9 +237,10 @@ export function GitHistory() {
       loadRepos();
       for (const repoPath of expandedReposRef.current) {
         loadCommits(repoPath);
+        loadBranches(repoPath);
       }
     }, 500);
-  }, [loadRepos, loadCommits]);
+  }, [loadRepos, loadCommits, loadBranches]);
 
   useTauriEvent<PtyOutputPayload>(
     'pty-output',
@@ -271,26 +289,52 @@ export function GitHistory() {
 
           {isExpanded && (
             <div className="relative" style={{ zIndex: 0 }}>
-              {state?.commits.map((commit) => (
-                <div
-                  key={commit.hash}
-                  className="py-1.5 cursor-pointer hover:bg-[var(--border-subtle)] rounded-[var(--radius-sm)] transition-colors duration-100"
-                  style={{ paddingLeft: `${(depth + 1) * 16 + 8}px`, paddingRight: '8px' }}
-                  onContextMenu={(e) => handleCommitContextMenu(e, repo.path, commit)}
-                  onDoubleClick={() => handleViewDiff(repo.path, commit)}
-                >
-                  <div className="text-sm text-[var(--text-primary)] truncate">
-                    {commit.message}
+              {state?.commits.map((commit) => {
+                const commitBranches = (repoBranches.get(repo.path) ?? []).filter(
+                  (b) => b.commitHash === commit.hash,
+                );
+                return (
+                  <div
+                    key={commit.hash}
+                    className="py-1.5 cursor-pointer hover:bg-[var(--border-subtle)] rounded-[var(--radius-sm)] transition-colors duration-100"
+                    style={{ paddingLeft: `${(depth + 1) * 16 + 8}px`, paddingRight: '8px' }}
+                    onContextMenu={(e) => handleCommitContextMenu(e, repo.path, commit)}
+                    onDoubleClick={() => handleViewDiff(repo.path, commit)}
+                  >
+                    <div className="text-sm text-[var(--text-primary)] flex items-center gap-1 min-w-0">
+                      {commitBranches.map((b) => (
+                        <span
+                          key={b.name}
+                          className="inline-flex items-center shrink-0 text-[11px] leading-[18px] px-1.5 rounded font-medium"
+                          style={{
+                            backgroundColor: b.isHead
+                              ? 'var(--color-accent, #58a6ff)'
+                              : b.isRemote
+                                ? 'var(--border-subtle, #3d3d3d)'
+                                : 'rgba(63, 185, 80, 0.2)',
+                            color: b.isHead
+                              ? '#fff'
+                              : b.isRemote
+                                ? 'var(--text-muted)'
+                                : 'rgb(63, 185, 80)',
+                          }}
+                          title={b.isRemote ? `远程分支: ${b.name}` : b.isHead ? `当前分支: ${b.name}` : `本地分支: ${b.name}`}
+                        >
+                          {b.name}
+                        </span>
+                      ))}
+                      <span className="truncate">{commit.message}</span>
+                    </div>
+                    <div className="text-xs text-[var(--text-muted)] flex items-center gap-1.5 mt-0.5">
+                      <span>{commit.author}</span>
+                      <span>&middot;</span>
+                      <span>{formatRelativeTime(commit.timestamp)}</span>
+                      <span>&middot;</span>
+                      <span className="font-mono">{commit.shortHash}</span>
+                    </div>
                   </div>
-                  <div className="text-xs text-[var(--text-muted)] flex items-center gap-1.5 mt-0.5">
-                    <span>{commit.author}</span>
-                    <span>&middot;</span>
-                    <span>{formatRelativeTime(commit.timestamp)}</span>
-                    <span>&middot;</span>
-                    <span className="font-mono">{commit.shortHash}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
 
               {state?.loading && (
                 <div className="text-center text-[var(--text-muted)] text-xs py-2">
@@ -363,6 +407,7 @@ export function GitHistory() {
             loadRepos();
             for (const repoPath of expandedRepos) {
               loadCommits(repoPath);
+              loadBranches(repoPath);
             }
           }}
           title="刷新"

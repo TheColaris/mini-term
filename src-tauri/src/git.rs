@@ -180,6 +180,15 @@ pub struct CommitFileInfo {
     pub old_path: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchInfo {
+    pub name: String,
+    pub is_head: bool,
+    pub is_remote: bool,
+    pub commit_hash: String,
+}
+
 /// Scan project_path for git repositories.
 fn find_repos(project_path: &Path) -> Vec<(String, PathBuf, Repository)> {
     let mut repos = Vec::new();
@@ -314,6 +323,50 @@ pub fn get_git_log(
     }
 
     Ok(result)
+}
+
+#[tauri::command]
+pub fn get_repo_branches(repo_path: String) -> Result<Vec<BranchInfo>, String> {
+    let path = Path::new(&repo_path);
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+
+    let head_target = repo.head().ok().and_then(|h| h.target());
+
+    let mut branches = Vec::new();
+
+    // Local branches
+    for branch_result in repo.branches(Some(git2::BranchType::Local)).map_err(|e| e.to_string())? {
+        let (branch, _) = branch_result.map_err(|e| e.to_string())?;
+        let name = branch.name().map_err(|e| e.to_string())?.unwrap_or("").to_string();
+        if let Some(target) = branch.get().target() {
+            branches.push(BranchInfo {
+                name,
+                is_head: head_target == Some(target),
+                is_remote: false,
+                commit_hash: target.to_string(),
+            });
+        }
+    }
+
+    // Remote branches
+    for branch_result in repo.branches(Some(git2::BranchType::Remote)).map_err(|e| e.to_string())? {
+        let (branch, _) = branch_result.map_err(|e| e.to_string())?;
+        let name = branch.name().map_err(|e| e.to_string())?.unwrap_or("").to_string();
+        // Skip HEAD pointer like origin/HEAD
+        if name.ends_with("/HEAD") {
+            continue;
+        }
+        if let Some(target) = branch.get().target() {
+            branches.push(BranchInfo {
+                name,
+                is_head: false,
+                is_remote: true,
+                commit_hash: target.to_string(),
+            });
+        }
+    }
+
+    Ok(branches)
 }
 
 #[tauri::command]

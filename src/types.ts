@@ -191,3 +191,10 @@ export interface CommitFileInfo {
   status: 'added' | 'modified' | 'deleted' | 'renamed';
   oldPath?: string;
 }
+
+export interface BranchInfo {
+  name: string;
+  isHead: boolean;
+  isRemote: boolean;
+  commitHash: string;
+}

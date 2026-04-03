@@ -40,6 +40,7 @@ pub fn run() {
             git::get_git_diff,
             git::discover_git_repos,
             git::get_git_log,
+            git::get_repo_branches,
             git::get_commit_files,
             git::get_commit_file_diff,
         ])
