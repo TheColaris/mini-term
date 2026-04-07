@@ -98,7 +98,7 @@ export function SessionList() {
             <div
               key={`${session.sessionType}-${session.id}`}
               className="flex items-start gap-2 px-2.5 py-1.5 rounded-[var(--radius-sm)] text-xs group hover:bg-[var(--border-subtle)] transition-colors cursor-default"
-              title={`${session.sessionType.toUpperCase()} · ${session.timestamp}`}
+              title={session.title}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
