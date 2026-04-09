@@ -1,9 +1,9 @@
-use portable_pty::{native_pty_system, CommandBuilder, PtySize, MasterPty, Child};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -28,21 +28,144 @@ struct PtyInstance {
     child: Box<dyn Child + Send + Sync>,
 }
 
+#[derive(Clone)]
+enum EscapeState {
+    None,
+    Escape,
+    Csi(String),
+    Ss3,
+}
+
+impl Default for EscapeState {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Clone, Default)]
+struct InputState {
+    line: Vec<char>,
+    cursor: usize,
+    escape: EscapeState,
+}
+
+impl InputState {
+    fn clear_line(&mut self) {
+        self.line.clear();
+        self.cursor = 0;
+        self.escape = EscapeState::None;
+    }
+
+    fn insert_char(&mut self, ch: char) {
+        self.line.insert(self.cursor, ch);
+        self.cursor += 1;
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        self.cursor -= 1;
+        self.line.remove(self.cursor);
+    }
+
+    fn delete(&mut self) {
+        if self.cursor < self.line.len() {
+            self.line.remove(self.cursor);
+        }
+    }
+
+    fn move_left(&mut self) {
+        self.cursor = self.cursor.saturating_sub(1);
+    }
+
+    fn move_right(&mut self) {
+        if self.cursor < self.line.len() {
+            self.cursor += 1;
+        }
+    }
+
+    fn move_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    fn move_end(&mut self) {
+        self.cursor = self.line.len();
+    }
+
+    fn take_line(&mut self) -> String {
+        let line = self.line.iter().collect();
+        self.clear_line();
+        line
+    }
+
+    fn apply_csi(&mut self, sequence: &str) {
+        match sequence {
+            "C" => self.move_right(),
+            "D" => self.move_left(),
+            "H" | "1~" | "7~" => self.move_home(),
+            "F" | "4~" | "8~" => self.move_end(),
+            "3~" => self.delete(),
+            // Up/Down and other editing shortcuts can replace the whole shell line.
+            // We can't reconstruct those mutations reliably from input alone.
+            "A" | "B" => self.clear_line(),
+            _ => self.clear_line(),
+        }
+    }
+
+    fn apply_ss3(&mut self, code: char) {
+        match code {
+            'C' => self.move_right(),
+            'D' => self.move_left(),
+            'H' => self.move_home(),
+            'F' => self.move_end(),
+            _ => self.clear_line(),
+        }
+    }
+
+    fn consume_escape_char(&mut self, ch: char) -> bool {
+        match &mut self.escape {
+            EscapeState::None => false,
+            EscapeState::Escape => {
+                self.escape = match ch {
+                    '[' => EscapeState::Csi(String::new()),
+                    'O' => EscapeState::Ss3,
+                    _ => {
+                        self.clear_line();
+                        EscapeState::None
+                    }
+                };
+                true
+            }
+            EscapeState::Csi(sequence) => {
+                sequence.push(ch);
+                if ('@'..='~').contains(&ch) {
+                    let completed = std::mem::take(sequence);
+                    self.escape = EscapeState::None;
+                    self.apply_csi(&completed);
+                }
+                true
+            }
+            EscapeState::Ss3 => {
+                self.escape = EscapeState::None;
+                self.apply_ss3(ch);
+                true
+            }
+        }
+    }
+}
+
 const AI_COMMANDS: &[&str] = &["claude", "codex"];
 
 /// 这些标志表示非交互命令（仅输出信息后退出），不应触发 AI 会话状态
-const NON_INTERACTIVE_FLAGS: &[&str] = &[
-    "-v", "--version",
-    "-h", "--help",
-    "-p", "--print",
-];
+const NON_INTERACTIVE_FLAGS: &[&str] = &["-v", "--version", "-h", "--help", "-p", "--print"];
 
 /// AI 会话中的显式退出命令
 const AI_EXIT_COMMANDS: &[&str] = &[
-    "/exit", "exit",       // Claude Code & Codex 通用
-    "/quit", "quit",       // Claude Code & Codex 通用
-    ":quit",               // Codex 交互式退出
-    "/logout",             // Codex 退出
+    "/exit", "exit", // Claude Code & Codex 通用
+    "/quit", "quit",    // Claude Code & Codex 通用
+    ":quit",   // Codex 交互式退出
+    "/logout", // Codex 退出
 ];
 
 /// 连续两次 Ctrl+C 退出的时间窗口
@@ -60,13 +183,20 @@ fn strip_ansi_codes(s: &str) -> String {
             match chars.peek() {
                 Some(&'[') => {
                     chars.next(); // consume '['
-                    // CSI sequence: skip until final byte (0x40–0x7E)
+                                  // CSI sequence: skip until final byte (0x40–0x7E)
                     for c2 in chars.by_ref() {
-                        if ('\x40'..='\x7e').contains(&c2) { break; }
+                        if ('\x40'..='\x7e').contains(&c2) {
+                            break;
+                        }
                     }
                 }
-                Some(&'O') => { chars.next(); chars.next(); } // SS3: ESC O <final>
-                _ => { chars.next(); } // other two-char escape
+                Some(&'O') => {
+                    chars.next();
+                    chars.next();
+                } // SS3: ESC O <final>
+                _ => {
+                    chars.next();
+                } // other two-char escape
             }
         } else {
             result.push(c);
@@ -80,10 +210,12 @@ fn output_contains_ai_command(output: &str) -> bool {
     let stripped = strip_ansi_codes(output);
     for line in stripped.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         // 检查首词和末词（首词捕获纯命令行，末词捕获 "prompt> claude" 格式）
         let first = line.split_whitespace().next().unwrap_or("").to_lowercase();
-        let last  = line.split_whitespace().last().unwrap_or("").to_lowercase();
+        let last = line.split_whitespace().last().unwrap_or("").to_lowercase();
         for word in [&first, &last] {
             for &ai in AI_COMMANDS {
                 if *word == ai
@@ -104,7 +236,7 @@ pub struct PtyManager {
     next_id: Arc<Mutex<u32>>,
     last_output: Arc<Mutex<HashMap<u32, Instant>>>,
     ai_sessions: Arc<Mutex<HashSet<u32>>>,
-    input_buffers: Arc<Mutex<HashMap<u32, String>>>,
+    input_states: Arc<Mutex<HashMap<u32, InputState>>>,
     last_ctrlc: Arc<Mutex<HashMap<u32, Instant>>>,
     last_enter: Arc<Mutex<HashMap<u32, Instant>>>,
 }
@@ -116,7 +248,7 @@ impl PtyManager {
             next_id: Arc::new(Mutex::new(1)),
             last_output: Arc::new(Mutex::new(HashMap::new())),
             ai_sessions: Arc::new(Mutex::new(HashSet::new())),
-            input_buffers: Arc::new(Mutex::new(HashMap::new())),
+            input_states: Arc::new(Mutex::new(HashMap::new())),
             last_ctrlc: Arc::new(Mutex::new(HashMap::new())),
             last_enter: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -145,52 +277,48 @@ impl PtyManager {
         let mut enter_ai = false;
         let mut exit_ai = false;
         {
-            let mut buffers = self.input_buffers.lock().unwrap();
-            let buf = buffers.entry(pty_id).or_default();
-            // 本地 ANSI 转义序列状态（xterm.js 每次发送完整转义序列）
-            let mut skip_ansi = false; // 已遇 ESC，等待 [ 或 O
-            let mut skip_csi  = false; // 在 CSI/SS3 序列中
+            let mut states = self.input_states.lock().unwrap();
+            let state = states.entry(pty_id).or_default();
             for ch in data.chars() {
-                if skip_ansi {
-                    skip_ansi = false;
-                    if ch == '[' || ch == 'O' { skip_csi = true; }
-                    continue;
-                }
-                if skip_csi {
-                    if ('@'..='~').contains(&ch) { skip_csi = false; }
+                if state.consume_escape_char(ch) {
                     continue;
                 }
                 match ch {
                     '\x1b' => {
-                        // 导航键/编辑键：清空缓冲区，防止 "[A" 等污染
-                        buf.clear();
-                        skip_ansi = true;
+                        state.escape = EscapeState::Escape;
                     }
-                    '\x03' if in_ai => {
-                        // Ctrl+C: 单次取消当前任务，连续两次退出 AI 会话
-                        let mut last = self.last_ctrlc.lock().unwrap();
-                        let now = Instant::now();
-                        if let Some(prev) = last.get(&pty_id) {
-                            if now.duration_since(*prev) < DOUBLE_CTRLC_WINDOW {
-                                exit_ai = true;
-                                last.remove(&pty_id);
+                    '\x03' => {
+                        state.clear_line();
+                        if in_ai {
+                            // Ctrl+C: 单次取消当前任务，连续两次退出 AI 会话
+                            let mut last = self.last_ctrlc.lock().unwrap();
+                            let now = Instant::now();
+                            if let Some(prev) = last.get(&pty_id) {
+                                if now.duration_since(*prev) < DOUBLE_CTRLC_WINDOW {
+                                    exit_ai = true;
+                                    last.remove(&pty_id);
+                                } else {
+                                    last.insert(pty_id, now);
+                                }
                             } else {
                                 last.insert(pty_id, now);
                             }
-                        } else {
-                            last.insert(pty_id, now);
                         }
-                        buf.clear();
                     }
-                    '\x04' if in_ai => {
-                        // Ctrl+D (EOF) → 退出 AI 会话
-                        exit_ai = true;
-                        buf.clear();
+                    '\x04' => {
+                        state.clear_line();
+                        if in_ai {
+                            // Ctrl+D (EOF) → 退出 AI 会话
+                            exit_ai = true;
+                        }
                     }
                     '\r' | '\n' => {
                         // 记录 Enter 时间，供输出扫描用
-                        self.last_enter.lock().unwrap().insert(pty_id, Instant::now());
-                        let cmd = buf.trim().to_lowercase();
+                        self.last_enter
+                            .lock()
+                            .unwrap()
+                            .insert(pty_id, Instant::now());
+                        let cmd = state.take_line().trim().to_lowercase();
                         if in_ai {
                             // AI 会话中：识别显式退出命令
                             if AI_EXIT_COMMANDS.iter().any(|&c| cmd == c) {
@@ -206,22 +334,28 @@ impl PtyManager {
                                     || first_word.ends_with(&format!("\\{ai}"))
                             });
                             // 排除带有非交互标志的命令（如 claude -v, codex --help）
-                            let has_non_interactive_flag = is_ai_cmd && words.any(|w| {
-                                NON_INTERACTIVE_FLAGS.iter().any(|&f| w == f)
-                            });
-                            if is_ai_cmd && !has_non_interactive_flag { enter_ai = true; }
+                            let has_non_interactive_flag = is_ai_cmd
+                                && words.any(|w| NON_INTERACTIVE_FLAGS.iter().any(|&f| w == f));
+                            if is_ai_cmd && !has_non_interactive_flag {
+                                enter_ai = true;
+                            }
                         }
-                        buf.clear();
                     }
-                    '\x7f' | '\x08' => { buf.pop(); }
-                    c if c >= ' ' => buf.push(c),
+                    '\x7f' | '\x08' => {
+                        state.backspace();
+                    }
+                    c if c >= ' ' => state.insert_char(c),
                     _ => {}
                 }
             }
         }
         if enter_ai || exit_ai {
             let mut sessions = self.ai_sessions.lock().unwrap();
-            if enter_ai { sessions.insert(pty_id); } else { sessions.remove(&pty_id); }
+            if enter_ai {
+                sessions.insert(pty_id);
+            } else {
+                sessions.remove(&pty_id);
+            }
         }
     }
 }
@@ -236,7 +370,12 @@ pub fn create_pty(
 ) -> Result<u32, String> {
     let pty_system = native_pty_system();
     let pair = pty_system
-        .openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| e.to_string())?;
 
     let mut cmd = CommandBuilder::new(&shell);
@@ -305,15 +444,20 @@ pub fn create_pty(
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     if !pending.is_empty() {
                         let data = String::from_utf8_lossy(&pending).into_owned();
-                        let _ = app_flush.emit("pty-output", PtyOutputPayload {
-                            pty_id: pty_id_for_reader, data,
-                        });
+                        let _ = app_flush.emit(
+                            "pty-output",
+                            PtyOutputPayload {
+                                pty_id: pty_id_for_reader,
+                                data,
+                            },
+                        );
                     }
 
                     let exit_code = {
                         let mut instances = instances_clone.lock().unwrap();
                         if let Some(mut inst) = instances.remove(&pty_id_for_reader) {
-                            inst.child.try_wait()
+                            inst.child
+                                .try_wait()
                                 .ok()
                                 .flatten()
                                 .map(|status| status.exit_code() as i32)
@@ -323,10 +467,13 @@ pub fn create_pty(
                         }
                     };
 
-                    let _ = app_flush.emit("pty-exit", PtyExitPayload {
-                        pty_id: pty_id_for_reader,
-                        exit_code,
-                    });
+                    let _ = app_flush.emit(
+                        "pty-exit",
+                        PtyExitPayload {
+                            pty_id: pty_id_for_reader,
+                            exit_code,
+                        },
+                    );
                     return;
                 }
             }
@@ -345,9 +492,13 @@ pub fn create_pty(
                             break;
                         } else if byte >= 0xC0 {
                             // 多字节序列的起始字节，检查序列是否完整
-                            let expected_len = if byte >= 0xF0 { 4 }
-                                else if byte >= 0xE0 { 3 }
-                                else { 2 };
+                            let expected_len = if byte >= 0xF0 {
+                                4
+                            } else if byte >= 0xE0 {
+                                3
+                            } else {
+                                2
+                            };
                             let remaining = pending.len() - i;
                             if remaining >= expected_len {
                                 // 序列完整
@@ -367,7 +518,9 @@ pub fn create_pty(
                     // 基于输出扫描检测 AI 会话（补偿上箭头历史调用 / PSReadLine 补全）：
                     // 若在 Enter 后 2 秒内收到包含 AI 命令 echo 的输出，自动标记为 AI 会话
                     {
-                        let recently_entered = last_enter_flush.lock().unwrap()
+                        let recently_entered = last_enter_flush
+                            .lock()
+                            .unwrap()
                             .get(&pty_id_for_reader)
                             .map(|t| t.elapsed() < AI_ENTER_SCAN_WINDOW)
                             .unwrap_or(false);
@@ -381,9 +534,13 @@ pub fn create_pty(
                         }
                     }
 
-                    let _ = app_flush.emit("pty-output", PtyOutputPayload {
-                        pty_id: pty_id_for_reader, data,
-                    });
+                    let _ = app_flush.emit(
+                        "pty-output",
+                        PtyOutputPayload {
+                            pty_id: pty_id_for_reader,
+                            data,
+                        },
+                    );
                     if let Ok(mut map) = last_output.lock() {
                         map.insert(pty_id_for_reader, Instant::now());
                     }
@@ -403,22 +560,32 @@ pub fn create_pty(
 
     {
         let mut instances = state.instances.lock().unwrap();
-        instances.insert(pty_id, PtyInstance {
-            writer,
-            master,
-            child,
-        });
+        instances.insert(
+            pty_id,
+            PtyInstance {
+                writer,
+                master,
+                child,
+            },
+        );
     }
 
     Ok(pty_id)
 }
 
 #[tauri::command]
-pub fn write_pty(state: tauri::State<'_, PtyManager>, pty_id: u32, data: String) -> Result<(), String> {
+pub fn write_pty(
+    state: tauri::State<'_, PtyManager>,
+    pty_id: u32,
+    data: String,
+) -> Result<(), String> {
     {
         let mut instances = state.instances.lock().unwrap();
         let instance = instances.get_mut(&pty_id).ok_or("PTY not found")?;
-        instance.writer.write_all(data.as_bytes()).map_err(|e| e.to_string())?;
+        instance
+            .writer
+            .write_all(data.as_bytes())
+            .map_err(|e| e.to_string())?;
         instance.writer.flush().map_err(|e| e.to_string())?;
     }
     state.track_input(pty_id, &data);
@@ -426,11 +593,22 @@ pub fn write_pty(state: tauri::State<'_, PtyManager>, pty_id: u32, data: String)
 }
 
 #[tauri::command]
-pub fn resize_pty(state: tauri::State<'_, PtyManager>, pty_id: u32, cols: u16, rows: u16) -> Result<(), String> {
+pub fn resize_pty(
+    state: tauri::State<'_, PtyManager>,
+    pty_id: u32,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
     let instances = state.instances.lock().unwrap();
     let instance = instances.get(&pty_id).ok_or("PTY not found")?;
-    instance.master
-        .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+    instance
+        .master
+        .resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| e.to_string())
 }
 
@@ -440,7 +618,7 @@ pub fn kill_pty(state: tauri::State<'_, PtyManager>, pty_id: u32) -> Result<(), 
     let instance = state.instances.lock().unwrap().remove(&pty_id);
     state.last_output.lock().unwrap().remove(&pty_id);
     state.ai_sessions.lock().unwrap().remove(&pty_id);
-    state.input_buffers.lock().unwrap().remove(&pty_id);
+    state.input_states.lock().unwrap().remove(&pty_id);
     state.last_ctrlc.lock().unwrap().remove(&pty_id);
     state.last_enter.lock().unwrap().remove(&pty_id);
 
@@ -660,5 +838,39 @@ mod tests {
             mgr.track_input(1, &ch.to_string());
         }
         assert!(mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn left_right_arrows_preserve_inline_edit_for_claude() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "clade");
+        mgr.track_input(1, "\x1b[D");
+        mgr.track_input(1, "\x1b[D");
+        mgr.track_input(1, "u");
+        mgr.track_input(1, "\x1b[C");
+        mgr.track_input(1, "\x1b[C");
+        mgr.track_input(1, "\r");
+        assert!(mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn split_escape_sequence_still_moves_cursor() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "clade");
+        mgr.track_input(1, "\x1b");
+        mgr.track_input(1, "[D");
+        mgr.track_input(1, "\x1b");
+        mgr.track_input(1, "[D");
+        mgr.track_input(1, "u\r");
+        assert!(mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn edited_non_interactive_flag_does_not_start_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude --versin");
+        mgr.track_input(1, "\x1b[D");
+        mgr.track_input(1, "o\r");
+        assert!(!mgr.is_ai_session(1));
     }
 }

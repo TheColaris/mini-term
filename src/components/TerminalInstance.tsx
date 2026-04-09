@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../store';
-import { getOrCreateTerminal, getCachedTerminal, getTerminalTheme, DARK_TERMINAL_THEME } from '../utils/terminalCache';
+import { getOrCreateTerminal, getCachedTerminal, getTerminalTheme, DARK_TERMINAL_THEME, writePtyInput } from '../utils/terminalCache';
 import { getResolvedTheme } from '../utils/themeManager';
 import '@xterm/xterm/css/xterm.css';
 
@@ -97,7 +97,7 @@ export function TerminalInstance({ ptyId }: Props) {
     setFileDrag(false);
     const filePath = e.dataTransfer.getData('text/plain').trim();
     if (filePath) {
-      invoke('write_pty', { ptyId, data: filePath });
+      void writePtyInput(ptyId, filePath);
       getCachedTerminal(ptyId)?.term.focus();
     }
   };

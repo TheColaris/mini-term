@@ -114,10 +114,18 @@ pub struct ShellConfig {
     pub args: Option<Vec<String>>,
 }
 
-fn default_ui_font_size() -> f64 { 13.0 }
-fn default_terminal_font_size() -> f64 { 14.0 }
-fn default_theme() -> String { "auto".into() }
-fn default_terminal_follow_theme() -> bool { true }
+fn default_ui_font_size() -> f64 {
+    13.0
+}
+fn default_terminal_font_size() -> f64 {
+    14.0
+}
+fn default_theme() -> String {
+    "auto".into()
+}
+fn default_terminal_follow_theme() -> bool {
+    true
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -139,52 +147,97 @@ impl Default for AppConfig {
 }
 
 #[cfg(target_os = "windows")]
-fn default_shell_name() -> String { "cmd".into() }
+fn default_shell_name() -> String {
+    "cmd".into()
+}
 
 #[cfg(target_os = "macos")]
-fn default_shell_name() -> String { "zsh".into() }
+fn default_shell_name() -> String {
+    "zsh".into()
+}
 
 #[cfg(target_os = "linux")]
-fn default_shell_name() -> String { "bash".into() }
+fn default_shell_name() -> String {
+    "bash".into()
+}
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn default_shell_name() -> String { "sh".into() }
+fn default_shell_name() -> String {
+    "sh".into()
+}
 
 #[cfg(target_os = "windows")]
 fn default_shells() -> Vec<ShellConfig> {
     vec![
-        ShellConfig { name: "cmd".into(), command: "cmd".into(), args: None },
-        ShellConfig { name: "powershell".into(), command: "powershell".into(), args: None },
-        ShellConfig { name: "pwsh".into(), command: "pwsh".into(), args: None },
+        ShellConfig {
+            name: "cmd".into(),
+            command: "cmd".into(),
+            args: None,
+        },
+        ShellConfig {
+            name: "powershell".into(),
+            command: "powershell".into(),
+            args: None,
+        },
+        ShellConfig {
+            name: "pwsh".into(),
+            command: "pwsh".into(),
+            args: None,
+        },
     ]
 }
 
 #[cfg(target_os = "macos")]
 fn default_shells() -> Vec<ShellConfig> {
     vec![
-        ShellConfig { name: "zsh".into(), command: "/bin/zsh".into(), args: Some(vec!["--login".into()]) },
-        ShellConfig { name: "bash".into(), command: "/bin/bash".into(), args: Some(vec!["--login".into()]) },
+        ShellConfig {
+            name: "zsh".into(),
+            command: "/bin/zsh".into(),
+            args: Some(vec!["--login".into()]),
+        },
+        ShellConfig {
+            name: "bash".into(),
+            command: "/bin/bash".into(),
+            args: Some(vec!["--login".into()]),
+        },
     ]
 }
 
 #[cfg(target_os = "linux")]
 fn default_shells() -> Vec<ShellConfig> {
     vec![
-        ShellConfig { name: "bash".into(), command: "/bin/bash".into(), args: None },
-        ShellConfig { name: "zsh".into(), command: "/usr/bin/zsh".into(), args: None },
-        ShellConfig { name: "sh".into(), command: "/bin/sh".into(), args: None },
+        ShellConfig {
+            name: "bash".into(),
+            command: "/bin/bash".into(),
+            args: None,
+        },
+        ShellConfig {
+            name: "zsh".into(),
+            command: "/usr/bin/zsh".into(),
+            args: None,
+        },
+        ShellConfig {
+            name: "sh".into(),
+            command: "/bin/sh".into(),
+            args: None,
+        },
     ]
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 fn default_shells() -> Vec<ShellConfig> {
-    vec![
-        ShellConfig { name: "sh".into(), command: "/bin/sh".into(), args: None },
-    ]
+    vec![ShellConfig {
+        name: "sh".into(),
+        command: "/bin/sh".into(),
+        args: None,
+    }]
 }
 
 fn config_path(app: &AppHandle) -> PathBuf {
-    let dir = app.path().app_data_dir().expect("failed to get app data dir");
+    let dir = app
+        .path()
+        .app_data_dir()
+        .expect("failed to get app data dir");
     fs::create_dir_all(&dir).ok();
     dir.join("config.json")
 }
@@ -237,7 +290,9 @@ fn migrate_config(mut config: AppConfig) -> AppConfig {
                 id: old_group.id.clone(),
                 name: old_group.name.clone(),
                 collapsed: old_group.collapsed,
-                children: old_group.project_ids.iter()
+                children: old_group
+                    .project_ids
+                    .iter()
                     .map(|pid| ProjectTreeItem::ProjectId(pid.clone()))
                     .collect(),
             }));
@@ -321,8 +376,18 @@ mod tests {
                 split_layout: SavedSplitNode::Split {
                     direction: "horizontal".into(),
                     children: vec![
-                        SavedSplitNode::Leaf { pane: SavedPane { shell_name: "cmd".into() } },
-                        SavedSplitNode::Leaf { pane: SavedPane { shell_name: "powershell".into() } },
+                        SavedSplitNode::Leaf {
+                            pane: None,
+                            panes: vec![SavedPane {
+                                shell_name: "cmd".into(),
+                            }],
+                        },
+                        SavedSplitNode::Leaf {
+                            pane: None,
+                            panes: vec![SavedPane {
+                                shell_name: "powershell".into(),
+                            }],
+                        },
                     ],
                     sizes: vec![50.0, 50.0],
                 },

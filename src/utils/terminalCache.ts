@@ -17,6 +17,7 @@ import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAppStore } from '../store';
 import type { PtyOutputPayload } from '../types';
 import { getResolvedTheme } from './themeManager';
+import { createPtyWriteQueue } from './ptyWriteQueue';
 
 export interface CachedTerminal {
   term: Terminal;
@@ -86,6 +87,9 @@ export function getTerminalTheme(terminalFollowTheme: boolean): typeof DARK_TERM
 }
 
 const cache = new Map<number, CachedEntry>();
+const enqueuePtyWrite = createPtyWriteQueue((ptyId, data) =>
+  invoke('write_pty', { ptyId, data })
+);
 
 export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   const existing = cache.get(ptyId);
@@ -138,7 +142,7 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
     if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') {
       e.preventDefault();
       readText().then((text) => {
-        if (text) invoke('write_pty', { ptyId, data: text });
+        if (text) void enqueuePtyWrite(ptyId, text);
       });
       return false;
     }
@@ -148,7 +152,7 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   // 用户输入 → PTY
   const onDataDisp = term.onData((data) => {
     term.scrollToBottom();
-    invoke('write_pty', { ptyId, data });
+    void enqueuePtyWrite(ptyId, data);
   });
 
   // 终端 resize → 同步到 PTY
@@ -200,4 +204,8 @@ export function updateAllTerminalThemes(terminalFollowTheme: boolean): void {
   for (const entry of cache.values()) {
     entry.term.options.theme = theme;
   }
+}
+
+export function writePtyInput(ptyId: number, data: string): Promise<void> {
+  return enqueuePtyWrite(ptyId, data);
 }
