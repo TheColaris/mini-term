@@ -116,6 +116,13 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+
+  // 拦截 CSI 3J (ED3 - Erase Saved Lines)：保留 scrollback 缓冲区。
+  // codex/claude 等 TUI 应用在主缓冲区周期性发送此序列清空滚动历史，
+  // 导致用户向上滚动时看不到之前的对话内容。返回 true 让 xterm.js
+  // 跳过默认（清空 scrollback）行为；其余 Ps 值（0/1/2）走默认逻辑。
+  term.parser.registerCsiHandler({ final: 'J' }, (params) => params[0] === 3);
+
   term.open(wrapper);
 
   // WebGL 渲染，降级时回退到 Canvas
