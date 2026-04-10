@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { useAppStore, genId } from '../store';
 import { StatusDot } from './StatusDot';
+import { DoneTag } from './DoneTag';
 import { SessionList } from './SessionList';
 import { showContextMenu } from '../utils/contextMenu';
 import { showPrompt } from '../utils/prompt';
@@ -270,6 +271,8 @@ export function ProjectList() {
   const renderProjectItem = (project: ProjectConfig, depth: number, parentGroupId?: string) => {
     const isActive = project.id === activeProjectId;
     const projectStatus = getProjectStatus(project.id);
+    const projectPs = projectStates.get(project.id);
+    const showDoneTag = !!projectPs?.needsAttention && !isActive;
 
     return (
       <div
@@ -338,7 +341,7 @@ export function ProjectList() {
         ) : (
           <span className="truncate flex-1">{project.name}</span>
         )}
-        <StatusDot status={projectStatus} />
+        {showDoneTag ? <DoneTag /> : <StatusDot status={projectStatus} />}
         <span
           className="text-[var(--text-muted)] hover:text-[var(--color-error)] hidden group-hover:inline transition-colors text-sm"
           onClick={(e) => handleRemoveProject(e, project.id)}

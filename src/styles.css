@@ -175,6 +175,35 @@ html, body, #root {
   animation: slideIn 0.12s ease-out;
 }
 
+/* ===== AI 完成 Tag ===== */
+.done-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--color-success);
+  color: var(--bg-base);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 10px;
+  font-family: system-ui, sans-serif;
+  box-shadow: 0 0 0 1px rgba(107, 184, 122, 0.4),
+              0 0 8px rgba(107, 184, 122, 0.3);
+  animation: tagFadeIn 0.3s ease-out;
+}
+
+:root[data-theme="light"] .done-tag {
+  color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(45, 138, 70, 0.4),
+              0 1px 3px rgba(45, 138, 70, 0.3);
+}
+
+@keyframes tagFadeIn {
+  0% { opacity: 0; transform: scale(0.6); }
+  60% { opacity: 1; transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
 /* ===== Context menu ===== */
 .ctx-menu {
   background: var(--bg-overlay);
