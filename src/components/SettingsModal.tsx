@@ -340,6 +340,18 @@ function SystemSettings() {
     invoke('save_config', { config: newConfig });
   }, [setConfig]);
 
+  const handleAiCompletionPopupChange = useCallback((enabled: boolean) => {
+    const newConfig = { ...useAppStore.getState().config, aiCompletionPopup: enabled };
+    setConfig(newConfig);
+    invoke('save_config', { config: newConfig });
+  }, [setConfig]);
+
+  const handleAiCompletionTaskbarFlashChange = useCallback((enabled: boolean) => {
+    const newConfig = { ...useAppStore.getState().config, aiCompletionTaskbarFlash: enabled };
+    setConfig(newConfig);
+    invoke('save_config', { config: newConfig });
+  }, [setConfig]);
+
   return (
     <div className="space-y-6">
       {/* 主题模式 */}
@@ -382,6 +394,46 @@ function SystemSettings() {
           <span
             className={`absolute top-0.5 left-0 w-4 h-4 rounded-full bg-white transition-transform ${
               config.terminalFollowTheme ? 'translate-x-[18px]' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </div>
+
+      {/* AI 完成弹框提醒 */}
+      <div className="flex items-center justify-between px-3 py-2.5 rounded-[var(--radius-md)] bg-[var(--bg-base)] border border-[var(--border-subtle)] mb-3">
+        <div>
+          <div className="text-base text-[var(--text-primary)]">AI 完成弹框提醒</div>
+          <div className="text-sm text-[var(--text-muted)]">AI 任务结束时在右下角弹出提醒卡片</div>
+        </div>
+        <button
+          className={`relative w-9 h-5 rounded-full transition-colors ${
+            config.aiCompletionPopup ? 'bg-[var(--accent)]' : 'bg-[var(--border-strong)]'
+          }`}
+          onClick={() => handleAiCompletionPopupChange(!config.aiCompletionPopup)}
+        >
+          <span
+            className={`absolute top-0.5 left-0 w-4 h-4 rounded-full bg-white transition-transform ${
+              config.aiCompletionPopup ? 'translate-x-[18px]' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </div>
+
+      {/* AI 完成任务栏闪烁 */}
+      <div className="flex items-center justify-between px-3 py-2.5 rounded-[var(--radius-md)] bg-[var(--bg-base)] border border-[var(--border-subtle)] mb-6">
+        <div>
+          <div className="text-base text-[var(--text-primary)]">AI 完成任务栏闪烁</div>
+          <div className="text-sm text-[var(--text-muted)]">AI 任务结束且窗口失焦时闪烁任务栏图标（Windows 主要支持）</div>
+        </div>
+        <button
+          className={`relative w-9 h-5 rounded-full transition-colors ${
+            config.aiCompletionTaskbarFlash ? 'bg-[var(--accent)]' : 'bg-[var(--border-strong)]'
+          }`}
+          onClick={() => handleAiCompletionTaskbarFlashChange(!config.aiCompletionTaskbarFlash)}
+        >
+          <span
+            className={`absolute top-0.5 left-0 w-4 h-4 rounded-full bg-white transition-transform ${
+              config.aiCompletionTaskbarFlash ? 'translate-x-[18px]' : 'translate-x-0.5'
             }`}
           />
         </button>
