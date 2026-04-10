@@ -142,15 +142,12 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
     if (e.type !== 'keydown') return true;
     if (e.ctrlKey && e.shiftKey && e.code === 'KeyC') {
       e.preventDefault();
-      const sel = term.getSelection();
-      if (sel) writeText(sel);
+      void copyTerminalSelection(ptyId);
       return false;
     }
     if (e.ctrlKey && e.shiftKey && e.code === 'KeyV') {
       e.preventDefault();
-      readText().then((text) => {
-        if (text) void enqueuePtyWrite(ptyId, text);
-      });
+      void pasteToTerminal(ptyId);
       return false;
     }
     return true;
@@ -215,4 +212,20 @@ export function updateAllTerminalThemes(terminalFollowTheme: boolean): void {
 
 export function writePtyInput(ptyId: number, data: string): Promise<void> {
   return enqueuePtyWrite(ptyId, data);
+}
+
+/** 复制当前终端选中文本到系统剪贴板。无选中则不操作。返回是否有内容被复制。 */
+export async function copyTerminalSelection(ptyId: number): Promise<boolean> {
+  const cached = cache.get(ptyId);
+  if (!cached) return false;
+  const sel = cached.term.getSelection();
+  if (!sel) return false;
+  await writeText(sel);
+  return true;
+}
+
+/** 读取系统剪贴板并写入终端 PTY。 */
+export async function pasteToTerminal(ptyId: number): Promise<void> {
+  const text = await readText();
+  if (text) await enqueuePtyWrite(ptyId, text);
 }

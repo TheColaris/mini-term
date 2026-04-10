@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../store';
-import { getOrCreateTerminal, getCachedTerminal, getTerminalTheme, DARK_TERMINAL_THEME, writePtyInput } from '../utils/terminalCache';
+import { getOrCreateTerminal, getCachedTerminal, getTerminalTheme, DARK_TERMINAL_THEME, writePtyInput, copyTerminalSelection, pasteToTerminal } from '../utils/terminalCache';
 import { getResolvedTheme } from '../utils/themeManager';
+import { showContextMenu } from '../utils/contextMenu';
 import '@xterm/xterm/css/xterm.css';
 
 interface Props {
@@ -102,6 +103,25 @@ export function TerminalInstance({ ptyId }: Props) {
     }
   };
 
+  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const hasSelection = !!getCachedTerminal(ptyId)?.term.getSelection();
+    showContextMenu(e.clientX, e.clientY, [
+      {
+        label: '复制',
+        disabled: !hasSelection,
+        onClick: () => { void copyTerminalSelection(ptyId); },
+      },
+      {
+        label: '粘贴',
+        onClick: () => {
+          void pasteToTerminal(ptyId);
+          getCachedTerminal(ptyId)?.term.focus();
+        },
+      },
+    ]);
+  };
+
   return (
     <div className="w-full h-full flex flex-col">
       <div
@@ -110,6 +130,7 @@ export function TerminalInstance({ ptyId }: Props) {
         onDragOverCapture={handleDragOver}
         onDragLeaveCapture={handleDragLeave}
         onDropCapture={handleDrop}
+        onContextMenu={handleContextMenu}
       >
         <div ref={containerRef} className="absolute top-1.5 bottom-0 left-2.5 right-0 cursor-none" />
 

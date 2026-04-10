@@ -315,6 +315,16 @@ html, body, #root {
   background: var(--color-error-muted);
 }
 
+.ctx-menu-item.disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.ctx-menu-item.disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
 .ctx-menu-sep {
   height: 1px;
   background: var(--border-subtle);

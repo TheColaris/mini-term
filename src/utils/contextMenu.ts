@@ -1,6 +1,7 @@
 interface MenuItem {
   label: string;
   danger?: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }
 
@@ -27,9 +28,13 @@ export function showContextMenu(x: number, y: number, items: MenuEntry[]) {
       return;
     }
     const item = document.createElement('div');
-    item.className = entry.danger ? 'ctx-menu-item danger' : 'ctx-menu-item';
+    const classes = ['ctx-menu-item'];
+    if (entry.danger) classes.push('danger');
+    if (entry.disabled) classes.push('disabled');
+    item.className = classes.join(' ');
     item.textContent = entry.label;
     item.onclick = () => {
+      if (entry.disabled) return;
       entry.onClick();
       cleanup();
     };
