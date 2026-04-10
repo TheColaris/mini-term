@@ -327,6 +327,8 @@ export const useAppStore = create<AppStore>((set) => ({
     terminalFontSize: 14,
     theme: 'auto',
     terminalFollowTheme: true,
+    aiCompletionPopup: true,
+    aiCompletionTaskbarFlash: true,
   },
   setConfig: (config) => set({ config }),
 
