@@ -11,7 +11,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.2.10-blue" alt="version">
-  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="platform">
+  <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="platform">
+  <img src="https://img.shields.io/badge/macOS%20%7C%20Linux-experimental-lightgrey" alt="platform-experimental">
   <img src="https://img.shields.io/badge/Tauri-v2-orange" alt="tauri">
   <img src="https://img.shields.io/badge/React-19-61dafb" alt="react">
   <img src="https://img.shields.io/badge/Rust-2021-dea584" alt="rust">
@@ -107,7 +108,9 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 
 前往 [Releases](https://github.com/dreamlonglll/mini-term/releases) 页面下载最新安装包。
 
-> Tauri bundle targets = `all`，覆盖 Windows、macOS、Linux 三大桌面平台。
+> **平台支持说明**
+> - **Windows** — 主要支持平台，保证可用性，日常开发与测试均在 Windows 上进行
+> - **macOS / Linux** — 代码层面已支持（Tauri bundle targets = `all`），但**可用性欠佳**，未经充分打磨，欢迎提 Issue 反馈
 
 ### 从源码构建
 
