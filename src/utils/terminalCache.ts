@@ -13,7 +13,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { readText, readImage, writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAppStore } from '../store';
 import type { PtyOutputPayload } from '../types';
 import { getResolvedTheme } from './themeManager';
@@ -224,8 +224,27 @@ export async function copyTerminalSelection(ptyId: number): Promise<boolean> {
   return true;
 }
 
-/** 读取系统剪贴板并写入终端 PTY。 */
+/** 检测剪贴板是否含图片（Tauri 插件 + 浏览器 Clipboard API 双重检测） */
+async function clipboardHasImage(): Promise<boolean> {
+  try {
+    await readImage();
+    return true;
+  } catch { /* Tauri 插件不支持该格式 */ }
+  try {
+    const items = await navigator.clipboard.read();
+    return items.some(item => item.types.some(t => t.startsWith('image/')));
+  } catch { /* 浏览器 Clipboard API 不可用 */ }
+  return false;
+}
+
+/** 读取系统剪贴板并写入终端 PTY。剪贴板含图片时发送 Alt+V 让 AI 工具处理。 */
 export async function pasteToTerminal(ptyId: number): Promise<void> {
-  const text = await readText();
+  if (await clipboardHasImage()) {
+    // 发送 Alt+V 转义序列（ESC v），Codex 等 TUI 会捕获该按键
+    // 并通过 arboard 自行读取系统剪贴板中的图片数据
+    await enqueuePtyWrite(ptyId, '\x1bv');
+    return;
+  }
+  const text = await readText().catch(() => null);
   if (text) await enqueuePtyWrite(ptyId, text);
 }
