@@ -839,7 +839,11 @@ fn full_replace_diff(old_content: &str, new_content: &str) -> Vec<DiffHunk> {
 }
 
 #[tauri::command]
-pub fn get_git_diff(project_path: String, file_path: String) -> Result<GitDiffResult, String> {
+pub fn get_git_diff(
+    project_path: String,
+    file_path: String,
+    staged: Option<bool>,
+) -> Result<GitDiffResult, String> {
     let project = Path::new(&project_path);
     let abs_file = project.join(&file_path);
 
@@ -848,47 +852,71 @@ pub fn get_git_diff(project_path: String, file_path: String) -> Result<GitDiffRe
         .workdir()
         .ok_or("bare repository not supported")?;
 
-    // Relative path inside repo
     let rel_path = diff_paths(&abs_file, workdir)
         .ok_or("file is outside repository working directory")?;
     let rel_str = rel_path.to_string_lossy().replace('\\', "/");
 
-    // Read new (working tree) content
-    let new_bytes = std::fs::read(&abs_file).map_err(|e| e.to_string())?;
+    let is_staged = staged.unwrap_or(false);
 
-    // Large file protection (> 1 MB)
-    if new_bytes.len() > 1_048_576 {
-        return Ok(GitDiffResult {
-            old_content: String::new(),
-            new_content: String::new(),
-            hunks: Vec::new(),
-            is_binary: false,
-            too_large: true,
-        });
-    }
-
-    // Binary detection
-    let new_content = match std::str::from_utf8(&new_bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
+    // Read new content: from index (staged) or working tree (unstaged)
+    let new_content = if is_staged {
+        let index = repo.index().map_err(|e| e.to_string())?;
+        match index.get_path(Path::new(&rel_str), 0) {
+            Some(entry) => {
+                let blob = repo.find_blob(entry.id).map_err(|e| e.to_string())?;
+                if blob.is_binary() {
+                    return Ok(GitDiffResult {
+                        old_content: String::new(),
+                        new_content: String::new(),
+                        hunks: Vec::new(),
+                        is_binary: true,
+                        too_large: false,
+                    });
+                }
+                if blob.content().len() > 1_048_576 {
+                    return Ok(GitDiffResult {
+                        old_content: String::new(),
+                        new_content: String::new(),
+                        hunks: Vec::new(),
+                        is_binary: false,
+                        too_large: true,
+                    });
+                }
+                std::str::from_utf8(blob.content())
+                    .map_err(|_| "binary".to_string())?
+                    .to_string()
+            }
+            None => String::new(),
+        }
+    } else {
+        let new_bytes = std::fs::read(&abs_file).map_err(|e| e.to_string())?;
+        if new_bytes.len() > 1_048_576 {
             return Ok(GitDiffResult {
                 old_content: String::new(),
                 new_content: String::new(),
                 hunks: Vec::new(),
-                is_binary: true,
-                too_large: false,
-            })
+                is_binary: false,
+                too_large: true,
+            });
+        }
+        match std::str::from_utf8(&new_bytes) {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                return Ok(GitDiffResult {
+                    old_content: String::new(),
+                    new_content: String::new(),
+                    hunks: Vec::new(),
+                    is_binary: true,
+                    too_large: false,
+                })
+            }
         }
     };
 
-    // Get HEAD content
     let old_content = match get_head_content(&repo, &rel_str)? {
-        None => String::new(), // empty repo
+        None => String::new(),
         Some(s) => s,
     };
-
-    // Check blob binary via git2 as well
-    // (already covered by UTF-8 check above for new content; old content checked in get_head_content)
 
     let old_lines: Vec<&str> = old_content.lines().collect();
     let new_lines_vec: Vec<&str> = new_content.lines().collect();
