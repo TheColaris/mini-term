@@ -598,6 +598,38 @@ pub fn create_pty(
     Ok(pty_id)
 }
 
+/// Windows ConPTY 无法一次处理大量输入数据（粘贴长文本时只剩最后一行）。
+/// 将数据按行拆分，每行写入后加短暂延迟，给 ConPTY 时间消化。
+/// 短数据（普通键盘输入）直接写入不受影响。
+fn write_pty_chunked(writer: &mut dyn Write, data: &str) -> Result<(), String> {
+    const CHUNK_THRESHOLD: usize = 128;
+    const INTER_LINE_DELAY: Duration = Duration::from_millis(1);
+
+    let bytes = data.as_bytes();
+
+    if !cfg!(windows) || bytes.len() <= CHUNK_THRESHOLD || !data.contains('\n') {
+        writer.write_all(bytes).map_err(|e| e.to_string())?;
+        writer.flush().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    // 按行拆分写入，保留每行的换行符
+    let mut start = 0;
+    while start < bytes.len() {
+        let end = match bytes[start..].iter().position(|&b| b == b'\n') {
+            Some(pos) => start + pos + 1, // 包含 \n
+            None => bytes.len(),           // 最后一段无换行
+        };
+        writer.write_all(&bytes[start..end]).map_err(|e| e.to_string())?;
+        writer.flush().map_err(|e| e.to_string())?;
+        start = end;
+        if start < bytes.len() {
+            thread::sleep(INTER_LINE_DELAY);
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn write_pty(
     state: tauri::State<'_, PtyManager>,
@@ -607,11 +639,7 @@ pub fn write_pty(
     {
         let mut instances = state.instances.lock().unwrap();
         let instance = instances.get_mut(&pty_id).ok_or("PTY not found")?;
-        instance
-            .writer
-            .write_all(data.as_bytes())
-            .map_err(|e| e.to_string())?;
-        instance.writer.flush().map_err(|e| e.to_string())?;
+        write_pty_chunked(&mut *instance.writer, &data)?;
     }
     state.track_input(pty_id, &data);
     Ok(())
