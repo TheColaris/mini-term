@@ -386,6 +386,17 @@ export function GitHistoryContent({ projectPath, repos, refreshRepos }: GitHisto
                 )}
               </div>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                <button
+                  className="w-5 h-5 flex items-center justify-center text-sm transition-colors rounded text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                  title="刷新"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    loadCommits(repo.path);
+                    loadBranches(repo.path);
+                  }}
+                >
+                  ↻
+                </button>
                 <GitActionButton
                   repoPath={repo.path}
                   action="pull"
