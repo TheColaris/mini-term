@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.14-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-0.2.15-blue" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="platform">
   <img src="https://img.shields.io/badge/macOS%20%7C%20Linux-experimental-lightgrey" alt="platform-experimental">
   <img src="https://img.shields.io/badge/Tauri-v2-orange" alt="tauri">
@@ -43,7 +43,7 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 - **高性能渲染** — xterm.js v6 + WebGL 加速，自动降级为 Canvas
 - **10 万行滚动缓冲** — 拦截 CSI 3J（ED3）指令，Claude / Codex 等 TUI 清屏时保留上滚历史
 - **终端缓存** — 切换标签 / 分屏不重建 xterm 实例，已有内容不丢失
-- **复制粘贴** — `Ctrl+Shift+C` / `Ctrl+Shift+V` 快捷键 + 右键菜单，未选中时"复制"自动置灰
+- **复制粘贴** — `Ctrl+Shift+C` / `Ctrl+Shift+V` 快捷键 + 右键菜单，未选中时"复制"自动置灰；Windows 大段多行粘贴自动分块写入，防止 ConPTY 丢行
 - **图片粘贴** — 剪贴板含截图时自动检测，通过 Win32 API 保存为临时 PNG 并粘贴路径，兼容 PinPix 等非标准格式
 - **文件拖拽** — 文件拖到终端自动插入绝对路径
 - **多 Shell 配置** — Windows（cmd / powershell / pwsh）、macOS（zsh / bash）、Linux（bash / sh）等，可自由增删
@@ -77,13 +77,14 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 - **提交 Diff** — 查看任意提交的文件变更，逐文件切换
 - **分支信息** — 本地 / 远程分支列表
 - **源码控制面板** — VS Code 风格 Changes 面板，Staged / Changes / Untracked 分组展示，支持单文件和全量 stage / unstage / discard，`Ctrl+Enter` 快速提交，列表与树形视图切换
-- **Pull / Push** — 仓库行内按钮一键同步远端
+- **Pull / Push** — 仓库行内按钮一键同步远端，支持刷新按钮重新加载提交记录与分支信息
 - **多仓库发现** — 自动扫描项目目录下所有 Git 仓库（递归 5 层，跳过 `node_modules` 等）
 
 ![Git 集成](docs/screenshots/git.png)
 
 ### 外观与配置
 
+- **Activity Bar 侧边栏** — 最左侧常驻 40px 图标栏，含 Projects / Sessions / Files / Git 四个面板开关，独立控制显隐，激活态蓝色竖条指示，状态持久化
 - **三种主题模式** — Auto（跟随系统）/ Light / Dark，深色基于 Warm Carbon 暖炭色调，自定义 CSS 变量体系
 - **字体独立调节** — UI 与终端字号分别可调（10-20px），终端可选是否跟随 UI 主题
 - **布局持久化** — 分屏比例、标签页、窗口大小 / 位置自动保存，重启恢复（`tauri-plugin-window-state`）
@@ -165,6 +166,7 @@ mini-term/
 │   │   ├── FileViewerModal.tsx   # 文件内容查看器
 │   │   ├── SettingsModal.tsx     # 设置弹窗（主题 / 字体 / Shell / AI 通知）
 │   │   ├── ToastContainer.tsx    # AI 完成 Toast 通知
+│   │   ├── ActivityBar.tsx        # Activity Bar 侧边栏（面板显隐 + AI 状态角标）
 │   │   ├── DoneTag.tsx           # 项目列表 DONE 徽章
 │   │   └── StatusDot.tsx         # 状态指示点
 │   ├── hooks/
@@ -172,6 +174,7 @@ mini-term/
 │   └── utils/
 │       ├── contextMenu.ts        # 右键菜单 DOM 实现
 │       ├── dragState.ts          # 项目树拖拽状态
+│       ├── fileDragState.ts      # 文件拖拽到终端状态管理
 │       ├── projectTree.ts        # 项目树递归操作
 │       ├── terminalCache.ts      # xterm 缓存 + 复制粘贴
 │       ├── themeManager.ts       # 主题切换 + 系统配色监听
@@ -217,10 +220,12 @@ error > ai-working > ai-idle > idle
 ### 布局模型
 
 ```
-App (Allotment 三栏)
-├── 左栏：ProjectList（项目 + 分组 + 会话 + DONE 徽章）
-├── 中栏：FileTree（目录浏览 + Git 状态 + 文件操作）
-└── 右栏
+App
+├── ActivityBar（常驻最左侧，面板显隐开关 + AI 状态角标）
+├── Allotment 三栏
+│   ├── 左栏：ProjectList（项目 + 分组 + 会话 + DONE 徽章）
+│   ├── 中栏：FileTree（目录浏览 + Git 状态 + 文件操作）
+│   └── 右栏
     ├── TabBar（标签管理）
     ├── SplitLayout（递归 SplitNode 分屏树）
     │   └── TerminalInstance × N（xterm.js + 右键菜单）
