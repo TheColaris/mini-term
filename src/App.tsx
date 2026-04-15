@@ -51,15 +51,24 @@ export function App() {
         initExpandedDirs(p.id, p.expandedDirs ?? []);
       }
 
-      // 异步恢复各项目的终端布局（不阻塞 UI，恢复完成后 store 自动更新）
-      Promise.all(
-        cfg.projects
-          .filter((p) => p.savedLayout && p.savedLayout.tabs.length > 0)
-          .map((p) => restoreLayout(p.id, p.savedLayout!, p.path, cfg))
-      ).catch(console.error);
-
       applyTheme(cfg.theme ?? 'auto');
       setConfigLoaded(true);
+
+      // 恢复各项目的终端布局，完成后再显示窗口，避免白屏闪烁
+      const showWindow = () => {
+        // 双 rAF 确保 React 渲染 + xterm.js canvas 绑定完成后再显示
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          getCurrentWindow().show();
+        }));
+      };
+      const layoutProjects = cfg.projects.filter((p) => p.savedLayout && p.savedLayout.tabs.length > 0);
+      if (layoutProjects.length > 0) {
+        Promise.all(
+          layoutProjects.map((p) => restoreLayout(p.id, p.savedLayout!, p.path, cfg))
+        ).then(showWindow).catch(() => showWindow());
+      } else {
+        showWindow();
+      }
     });
   }, []);
 

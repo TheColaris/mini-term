@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../store';
-import { getOrCreateTerminal, getCachedTerminal, getTerminalTheme, DARK_TERMINAL_THEME, writePtyInput, copyTerminalSelection, pasteToTerminal } from '../utils/terminalCache';
+import { getOrCreateTerminal, getCachedTerminal, activateWebgl, getTerminalTheme, DARK_TERMINAL_THEME, writePtyInput, copyTerminalSelection, pasteToTerminal } from '../utils/terminalCache';
 import { getResolvedTheme } from '../utils/themeManager';
 import { showContextMenu } from '../utils/contextMenu';
 import '@xterm/xterm/css/xterm.css';
@@ -33,6 +33,8 @@ export function TerminalInstance({ ptyId }: Props) {
         fitAddon.fit();
         invoke('resize_pty', { ptyId, cols: term.cols, rows: term.rows });
         term.refresh(0, term.rows - 1);
+        // 等 canvas 渲染器首帧合成上屏后再加载 WebGL，避免替换 canvas 时闪白
+        requestAnimationFrame(() => activateWebgl(ptyId));
       }
     });
 

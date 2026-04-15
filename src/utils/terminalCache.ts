@@ -27,6 +27,7 @@ export interface CachedTerminal {
 
 interface CachedEntry extends CachedTerminal {
   cleanup: () => void;
+  webglLoaded: boolean;
 }
 
 export const DARK_TERMINAL_THEME = {
@@ -100,6 +101,10 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   wrapper.style.width = '100%';
   wrapper.style.height = '100%';
 
+  const theme = getTerminalTheme(useAppStore.getState().config.terminalFollowTheme ?? true);
+  // 预设背景色，防止 WebGL canvas 首帧渲染前闪白
+  wrapper.style.backgroundColor = theme.background!;
+
   const term = new Terminal({
     fontSize: useAppStore.getState().config.terminalFontSize ?? 14,
     fontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
@@ -111,7 +116,7 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
     scrollback: 100000,
     letterSpacing: 0,
     lineHeight: 1.35,
-    theme: getTerminalTheme(useAppStore.getState().config.terminalFollowTheme ?? true),
+    theme,
   });
 
   const fitAddon = new FitAddon();
@@ -124,18 +129,6 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   term.parser.registerCsiHandler({ final: 'J' }, (params) => params[0] === 3);
 
   term.open(wrapper);
-
-  // WebGL 渲染，降级时回退到 Canvas
-  try {
-    const webgl = new WebglAddon();
-    webgl.onContextLoss(() => {
-      webgl.dispose();
-      term.refresh(0, term.rows - 1);
-    });
-    term.loadAddon(webgl);
-  } catch {
-    // WebGL 不支持
-  }
 
   // 剪贴板快捷键
   term.attachCustomKeyEventHandler((e) => {
@@ -184,9 +177,26 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
     term.dispose();
   };
 
-  const entry: CachedEntry = { term, fitAddon, wrapper, cleanup };
+  const entry: CachedEntry = { term, fitAddon, wrapper, cleanup, webglLoaded: false };
   cache.set(ptyId, entry);
   return entry;
+}
+
+/** 在终端已挂载 DOM 并 fit 后激活 WebGL 渲染，降级时回退 Canvas */
+export function activateWebgl(ptyId: number): void {
+  const entry = cache.get(ptyId);
+  if (!entry || entry.webglLoaded) return;
+  entry.webglLoaded = true;
+  try {
+    const webgl = new WebglAddon();
+    webgl.onContextLoss(() => {
+      webgl.dispose();
+      entry.term.refresh(0, entry.term.rows - 1);
+    });
+    entry.term.loadAddon(webgl);
+  } catch {
+    // WebGL 不支持
+  }
 }
 
 /** 获取已缓存的终端（不创建新的） */
