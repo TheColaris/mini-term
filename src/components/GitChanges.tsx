@@ -421,6 +421,7 @@ export function GitChanges({ projectPath: _projectPath, repoPath, onCommitSucces
           onClose={() => setDiffModal(null)}
           projectPath={repoPath}
           status={diffModalStatus}
+          staged={diffModal.staged}
         />
       )}
     </div>
