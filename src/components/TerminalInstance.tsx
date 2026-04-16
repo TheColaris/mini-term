@@ -31,36 +31,66 @@ export function TerminalInstance({ ptyId }: Props) {
 
     container.appendChild(wrapper);
 
+    // fit() 前记住滚动位置（appendChild 不触发 reflow，buffer 状态尚未改变）
+    const bufBefore = term.buffer.active;
+    const mountWasAtBottom = bufBefore.baseY + term.rows >= bufBefore.length;
+
     requestAnimationFrame(() => {
       if (container.clientWidth > 0 && container.clientHeight > 0) {
         fitAddon.fit();
         invoke('resize_pty', { ptyId, cols: term.cols, rows: term.rows });
         term.refresh(0, term.rows - 1);
+        // split/remount 后视口可能停留在 buffer 顶部，滚回光标位置
+        if (mountWasAtBottom) term.scrollToBottom();
         // 等 canvas 渲染器首帧合成上屏后再加载 WebGL，避免替换 canvas 时闪白
         requestAnimationFrame(() => activateWebgl(ptyId));
       }
     });
 
     let rafId: number;
+    let settleId: ReturnType<typeof setTimeout>;
+    // 初始值用挂载前采样值，避免 ResizeObserver 首次回调时 fit 已改变 buffer 状态
+    let wasAtBottom = mountWasAtBottom;
+    let resizing = false;
     const observer = new ResizeObserver(() => {
+      if (!resizing) {
+        const buf = term.buffer.active;
+        wasAtBottom = buf.baseY + term.rows >= buf.length;
+        resizing = true;
+      }
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
         if (container.clientWidth > 0 && container.clientHeight > 0) {
           fitAddon.fit();
         }
       });
+      // resize 结束后做一次完整刷新，修复 reflow 残留的空白行/空格
+      clearTimeout(settleId);
+      settleId = setTimeout(() => {
+        resizing = false;
+        if (container.clientWidth > 0 && container.clientHeight > 0) {
+          fitAddon.fit();
+          term.refresh(0, term.rows - 1);
+          // split/resize 后若用户原本在底部，确保视口跟随光标
+          if (wasAtBottom) term.scrollToBottom();
+        }
+      }, 150);
     });
     observer.observe(container);
 
     const visibilityObserver = new IntersectionObserver((entries) => {
       if (entries.some((e) => e.isIntersecting)) {
-        requestAnimationFrame(() => fitAddon.fit());
+        requestAnimationFrame(() => {
+          fitAddon.fit();
+          term.refresh(0, term.rows - 1);
+        });
       }
     });
     visibilityObserver.observe(container);
 
     return () => {
       cancelAnimationFrame(rafId);
+      clearTimeout(settleId);
       observer.disconnect();
       visibilityObserver.disconnect();
       wrapper.remove();

@@ -12,11 +12,12 @@ interface Props {
   onLayoutChange?: (updatedNode: SplitNode) => void;
 }
 
-// Stable key: use the first pane's ID so adding/removing tabs doesn't
-// cause Allotment to remount and lose split sizes.
+// Stable key: 递归取第一个叶节点的 pane ID。
+// 当 leaf 被 insertSplit 变为 split 时，原 leaf 始终是 children[0]，
+// key 不变 → 父级 Allotment 不会重新分配尺寸。
 function getNodeKey(node: SplitNode): string {
   if (node.type === 'leaf') return node.panes[0]?.id ?? 'empty';
-  return node.children.map(getNodeKey).join('-');
+  return getNodeKey(node.children[0]);
 }
 
 export function SplitLayout({ node, projectPath, onSplit, onCloseLeaf, onUpdateNode, onLayoutChange }: Props) {
