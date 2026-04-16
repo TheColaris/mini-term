@@ -222,3 +222,22 @@ pub fn read_clipboard_image() -> Result<String, String> {
         Err("仅支持 Windows 平台".into())
     }
 }
+
+/// 将长文本剪贴板内容保存为 temp 目录下的 .txt 文件，返回绝对路径。
+/// 与图片粘贴共用 `mini-term-clipboard` 目录，清理逻辑自动覆盖。
+#[tauri::command]
+pub fn save_clipboard_text(text: String) -> Result<String, String> {
+    let dir = std::env::temp_dir().join("mini-term-clipboard");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建临时目录失败: {e}"))?;
+
+    let path = dir.join(format!(
+        "paste-{}.txt",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    ));
+
+    std::fs::write(&path, text.as_bytes()).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}

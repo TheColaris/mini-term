@@ -247,14 +247,29 @@ async function clipboardHasImage(): Promise<boolean> {
   return false;
 }
 
-/** 读取系统剪贴板并写入终端 PTY。剪贴板含图片时保存为 temp PNG 粘贴路径，或发送 Alt+V。 */
+/** 长文本阈值：满足任一条件即转存为临时文件 */
+const LONG_TEXT_LINE_THRESHOLD = 10;
+const LONG_TEXT_CHAR_THRESHOLD = 2000;
+
+/** 判定剪贴板文本是否需要转存为临时文件（避免直接粘贴超长内容） */
+function isLongText(text: string): boolean {
+  if (text.length >= LONG_TEXT_CHAR_THRESHOLD) return true;
+  const lines = text.replace(/\r\n/g, '\n').split('\n').length;
+  return lines >= LONG_TEXT_LINE_THRESHOLD;
+}
+
+/** 读取系统剪贴板并写入终端 PTY。
+ * - 剪贴板含图片 → 保存为 temp PNG，粘贴带引号的路径（兼容含空格路径）
+ * - 文本长度 ≥ 2000 字符或 ≥ 10 行 → 保存为 temp .txt，粘贴带引号的路径
+ * - 否则直接粘贴文本
+ */
 export async function pasteToTerminal(ptyId: number): Promise<void> {
   if (await clipboardHasImage()) {
     // 优先：Win32 API 读取图片保存为 temp PNG，粘贴文件路径
     // 兼容 PinPix 等 arboard 无法读取的非标准剪贴板格式
     try {
       const path: string = await invoke('read_clipboard_image');
-      await enqueuePtyWrite(ptyId, path);
+      await enqueuePtyWrite(ptyId, `"${path}"`);
       return;
     } catch { /* Win32 也读不到，回退 Alt+V */ }
     // 回退：发送 Alt+V 转义序列让 AI 工具自行处理
@@ -262,5 +277,16 @@ export async function pasteToTerminal(ptyId: number): Promise<void> {
     return;
   }
   const text = await readText().catch(() => null);
-  if (text) await enqueuePtyWrite(ptyId, text);
+  if (!text) return;
+
+  // 长文本：转存临时文件，粘贴路径；失败则回退到直接粘贴
+  if (isLongText(text)) {
+    try {
+      const path: string = await invoke('save_clipboard_text', { text });
+      await enqueuePtyWrite(ptyId, `"${path}"`);
+      return;
+    } catch { /* 写文件失败，回退到直接粘贴 */ }
+  }
+
+  await enqueuePtyWrite(ptyId, text);
 }

@@ -85,6 +85,7 @@ pub fn run() {
             git::git_discard_file,
             editor::open_in_vscode,
             clipboard::read_clipboard_image,
+            clipboard::save_clipboard_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
