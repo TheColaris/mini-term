@@ -10,7 +10,7 @@ import { DoneTag } from './DoneTag';
 import { SessionList } from './SessionList';
 import { showContextMenu } from '../utils/contextMenu';
 import { showPrompt } from '../utils/prompt';
-import { setDragPayload, getDragPayload } from '../utils/dragState';
+import { initProjectDrag, isProjectDragging, getProjectDragPayload, onProjectDragEnd } from '../utils/projectDragState';
 import {
   getOrderedTree,
   collectAllGroups,
@@ -222,41 +222,35 @@ export function ProjectList() {
     setEditingGroupId(null);
   }, [editingGroupId, editingName, renameGroup]);
 
-  // === 拖拽处理 ===
+  // === 拖拽处理（自定义鼠标事件，替代 HTML5 DnD，规避 WebView2 dragDropEnabled 拦截） ===
 
-  const handleProjectDragStart = useCallback((e: React.DragEvent, projectId: string) => {
-    e.dataTransfer.setData('application/project-id', projectId);
-    e.dataTransfer.effectAllowed = 'move';
-    setDragPayload({ type: 'project', projectId });
-    // 添加拖拽时的半透明效果
-    requestAnimationFrame(() => {
-      (e.target as HTMLElement).style.opacity = '0.4';
-    });
+  const handleProjectMouseDown = useCallback((e: React.MouseEvent, projectId: string) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('input')) return;
+    initProjectDrag(
+      { type: 'project', projectId },
+      e.currentTarget as HTMLElement,
+      e.clientX, e.clientY,
+    );
+    onProjectDragEnd(() => setDropIndicator(null));
   }, []);
 
-  const handleGroupDragStart = useCallback((e: React.DragEvent, groupId: string) => {
-    e.dataTransfer.setData('application/group-id', groupId);
-    e.dataTransfer.effectAllowed = 'move';
-    setDragPayload({ type: 'group', groupId });
-    requestAnimationFrame(() => {
-      (e.target as HTMLElement).style.opacity = '0.4';
-    });
+  const handleGroupMouseDown = useCallback((e: React.MouseEvent, groupId: string) => {
+    if (e.button !== 0 || (e.target as HTMLElement).closest('input')) return;
+    initProjectDrag(
+      { type: 'group', groupId },
+      e.currentTarget as HTMLElement,
+      e.clientX, e.clientY,
+    );
+    onProjectDragEnd(() => setDropIndicator(null));
   }, []);
 
-  const handleDragEnd = useCallback((e: React.DragEvent) => {
-    (e.target as HTMLElement).style.opacity = '';
-    setDragPayload(null);
-    setDropIndicator(null);
-  }, []);
-
-  const handleDragOver = useCallback((e: React.DragEvent, targetId: string, allowInside: boolean) => {
-    const payload = getDragPayload();
+  const handleMouseMoveOver = useCallback((e: React.MouseEvent, targetId: string, allowInside: boolean) => {
+    const payload = getProjectDragPayload();
     if (!payload) return;
     if (
       (payload.type === 'project' && payload.projectId === targetId) ||
       (payload.type === 'group' && payload.groupId === targetId)
     ) return;
-    e.preventDefault();
 
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const y = e.clientY - rect.top;
@@ -290,25 +284,19 @@ export function ProjectList() {
       }
     }
 
-    e.dataTransfer.dropEffect = forbidden ? 'none' : 'move';
     setDropIndicator({ id: targetId, position, forbidden });
   }, []);
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    const next = e.relatedTarget as Node | null;
-    if (!next || !e.currentTarget.contains(next)) {
-      setDropIndicator(null);
-    }
+  const handleMouseLeaveTarget = useCallback(() => {
+    if (!isProjectDragging()) return;
+    setDropIndicator(null);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent, targetId: string) => {
-    e.preventDefault();
-    const payload = getDragPayload();
+  const handleMouseUpDrop = useCallback((_e: React.MouseEvent, targetId: string) => {
+    const payload = getProjectDragPayload();
     if (!payload) return;
     const indicator = dropIndicator;
     setDropIndicator(null);
-    setDragPayload(null);
-    (e.target as HTMLElement).style.opacity = '';
 
     if (!indicator || indicator.forbidden) return;
 
@@ -363,12 +351,10 @@ export function ProjectList() {
             : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--border-subtle)]'
         }`}
         style={{ paddingLeft: `${depth * 16 + 10}px`, paddingRight: '10px' }}
-        draggable
-        onDragStart={(e) => handleProjectDragStart(e, project.id)}
-        onDragEnd={handleDragEnd}
-        onDragOver={(e) => handleDragOver(e, project.id, false)}
-        onDragLeave={handleDragLeave}
-        onDrop={(e) => handleDrop(e, project.id)}
+        onMouseDown={(e) => handleProjectMouseDown(e, project.id)}
+        onMouseMove={(e) => handleMouseMoveOver(e, project.id, false)}
+        onMouseLeave={handleMouseLeaveTarget}
+        onMouseUp={(e) => handleMouseUpDrop(e, project.id)}
         onClick={() => setActiveProject(project.id)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -451,12 +437,10 @@ export function ProjectList() {
                 : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--border-subtle)]'
           }`}
           style={{ paddingLeft: `${depth * 16}px`, paddingRight: '10px' }}
-          draggable={!isEditing}
-          onDragStart={(e) => handleGroupDragStart(e, group.id)}
-          onDragEnd={handleDragEnd}
-          onDragOver={(e) => handleDragOver(e, group.id, true)}
-          onDragLeave={handleDragLeave}
-          onDrop={(e) => handleDrop(e, group.id)}
+          onMouseDown={(e) => handleGroupMouseDown(e, group.id)}
+          onMouseMove={(e) => handleMouseMoveOver(e, group.id, true)}
+          onMouseLeave={handleMouseLeaveTarget}
+          onMouseUp={(e) => handleMouseUpDrop(e, group.id)}
           onClick={() => { if (!isEditing) toggleGroupCollapse(group.id); saveConfig(); }}
           onContextMenu={(e) => {
             e.preventDefault();

@@ -111,7 +111,8 @@ html, body, #root {
 body.file-dragging [data-terminal-drop] > * {
   pointer-events: none !important;
 }
-body.file-dragging {
+body.file-dragging,
+body.project-dragging {
   cursor: grabbing !important;
   user-select: none !important;
 }
