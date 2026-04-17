@@ -370,7 +370,11 @@ export const useAppStore = create<AppStore>((set) => ({
       if (ps?.needsAttention) {
         newStates.set(id, { ...ps, needsAttention: false });
       }
-      return { activeProjectId: id, projectStates: newStates };
+      const newConfig =
+        state.config.lastActiveProjectId === id
+          ? state.config
+          : { ...state.config, lastActiveProjectId: id };
+      return { activeProjectId: id, projectStates: newStates, config: newConfig };
     }),
 
   addProject: (project) =>
@@ -410,6 +414,9 @@ export const useAppStore = create<AppStore>((set) => ({
         state.activeProjectId === id
           ? newConfig.projects[0]?.id ?? null
           : state.activeProjectId;
+      if (newConfig.lastActiveProjectId === id) {
+        newConfig.lastActiveProjectId = newActive ?? undefined;
+      }
       return {
         config: newConfig,
         projectStates: newStates,

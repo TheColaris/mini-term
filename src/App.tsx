@@ -42,9 +42,14 @@ export function App() {
           newStates.set(p.id, { id: p.id, tabs: [], activeTabId: '' });
         }
       }
+      const lastActive = cfg.lastActiveProjectId;
+      const initialActive =
+        lastActive && cfg.projects.some((p) => p.id === lastActive)
+          ? lastActive
+          : cfg.projects[0]?.id ?? null;
       useAppStore.setState({
         projectStates: newStates,
-        activeProjectId: cfg.projects[0]?.id ?? null,
+        activeProjectId: initialActive,
       });
 
       // 恢复各项目的展开目录状态

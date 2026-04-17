@@ -31,6 +31,7 @@ export interface AppConfig {
   sessionsVisible: boolean;
   filesVisible: boolean;
   gitVisible: boolean;
+  lastActiveProjectId?: string;
 }
 
 export interface ProjectConfig {
