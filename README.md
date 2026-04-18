@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.17-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-0.2.18-blue" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="platform">
   <img src="https://img.shields.io/badge/macOS%20%7C%20Linux-experimental-lightgrey" alt="platform-experimental">
   <img src="https://img.shields.io/badge/Tauri-v2-orange" alt="tauri">
@@ -63,7 +63,7 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 
 ### 项目管理
 
-- **项目列表** — 左侧边栏管理多个项目目录，一键切换工作区
+- **项目列表** — 左侧边栏管理多个项目目录，一键切换工作区，重启自动恢复上次激活项目
 - **拖拽添加项目** — 从资源管理器拖拽文件夹到项目列表即可快速添加，自动识别文件 / 文件夹 / 重复项目并给出视觉反馈
 - **嵌套分组** — 最多 3 级项目分组，拖拽排序，折叠 / 展开
 - **文件树** — 集成目录浏览器，`.gitignore` 过滤，`notify` 文件监听实时刷新
