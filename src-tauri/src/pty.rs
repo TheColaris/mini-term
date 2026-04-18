@@ -673,6 +673,7 @@ fn write_pty_chunked(writer: &mut dyn Write, data: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn write_pty(
+    app: tauri::AppHandle,
     state: tauri::State<'_, PtyManager>,
     pty_id: u32,
     data: String,
@@ -683,6 +684,17 @@ pub fn write_pty(
         write_pty_chunked(&mut *instance.writer, &data)?;
     }
     state.track_input(pty_id, &data);
+
+    for submit in state.drain_submits(pty_id) {
+        let _ = app.emit(
+            "ai-user-submit",
+            AiUserSubmitPayload {
+                pty_id,
+                line: submit.line,
+                ts: submit.ts,
+            },
+        );
+    }
     Ok(())
 }
 
@@ -727,6 +739,7 @@ pub fn kill_pty(state: tauri::State<'_, PtyManager>, pty_id: u32) -> Result<(), 
     state.input_states.lock().unwrap().remove(&pty_id);
     state.last_ctrlc.lock().unwrap().remove(&pty_id);
     state.last_enter.lock().unwrap().remove(&pty_id);
+    state.pending_submits.lock().unwrap().remove(&pty_id);
     state.resize_cooldown_until.lock().unwrap().remove(&pty_id);
 
     // Drop the PTY instance on a background thread.
