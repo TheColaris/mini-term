@@ -16,13 +16,51 @@ pub struct FileEntry {
     pub ignored: bool,
 }
 
-fn build_gitignore(project_root: &Path) -> Option<Gitignore> {
-    let gitignore_path = project_root.join(".gitignore");
-    if !gitignore_path.exists() {
-        return None;
+/// 从 project_root 到 current 逐级收集 .gitignore，返回顺序为「根 → 当前」
+///
+/// 参考 git 的处理方式：每一层子目录都可以有自己的 .gitignore，
+/// 子目录规则优先级高于父级（可通过 `!pattern` 取消父级的忽略）。
+fn collect_gitignores(project_root: &Path, current: &Path) -> Vec<Gitignore> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut cur = current.to_path_buf();
+    loop {
+        dirs.push(cur.clone());
+        if cur.as_path() == project_root {
+            break;
+        }
+        match cur.parent() {
+            Some(parent) if parent.starts_with(project_root) => {
+                cur = parent.to_path_buf();
+            }
+            _ => break,
+        }
     }
-    let (gi, _err) = Gitignore::new(&gitignore_path);
-    Some(gi)
+    dirs.reverse();
+
+    dirs.iter()
+        .filter_map(|dir| {
+            let gi_path = dir.join(".gitignore");
+            if !gi_path.exists() {
+                return None;
+            }
+            let (gi, _err) = Gitignore::new(&gi_path);
+            Some(gi)
+        })
+        .collect()
+}
+
+/// 按「根 → 当前」顺序合并 match 结果：后者覆盖前者，支持 `!pattern` 白名单
+fn is_path_ignored(gitignores: &[Gitignore], full_path: &Path, is_dir: bool) -> bool {
+    let mut ignored = false;
+    for gi in gitignores {
+        let m = gi.matched(full_path, is_dir);
+        if m.is_whitelist() {
+            ignored = false;
+        } else if m.is_ignore() {
+            ignored = true;
+        }
+    }
+    ignored
 }
 
 const ALWAYS_IGNORE: &[&str] = &[".git", "node_modules", "target", ".next", "dist", "__pycache__", ".superpowers"];
@@ -36,24 +74,13 @@ pub fn filter_directories(paths: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-#[cfg(test)]
-fn should_ignore(name: &str, full_path: &Path, is_dir: bool, gitignore: &Option<Gitignore>) -> bool {
-    if is_dir && ALWAYS_IGNORE.contains(&name) {
-        return true;
-    }
-    if let Some(gi) = gitignore {
-        return gi.matched(full_path, is_dir).is_ignore();
-    }
-    false
-}
-
 #[tauri::command]
 pub fn list_directory(project_root: String, path: String) -> Result<Vec<FileEntry>, String> {
     let dir = Path::new(&path);
     if !dir.is_dir() {
         return Err(format!("Not a directory: {}", path));
     }
-    let gitignore = build_gitignore(Path::new(&project_root));
+    let gitignores = collect_gitignores(Path::new(&project_root), dir);
     let mut entries: Vec<FileEntry> = fs::read_dir(dir)
         .map_err(|e| e.to_string())?
         .filter_map(|entry| {
@@ -65,11 +92,7 @@ pub fn list_directory(project_root: String, path: String) -> Result<Vec<FileEntr
             if is_dir && ALWAYS_IGNORE.contains(&name.as_str()) {
                 return None;
             }
-            let ignored = if let Some(gi) = &gitignore {
-                gi.matched(&full_path, is_dir).is_ignore()
-            } else {
-                false
-            };
+            let ignored = is_path_ignored(&gitignores, &full_path, is_dir);
             Some(FileEntry {
                 name,
                 path: full_path.to_string_lossy().to_string(),
@@ -206,16 +229,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_ignore_node_modules() {
-        let path = Path::new("node_modules");
-        assert!(should_ignore("node_modules", path, true, &None));
-        let git_path = Path::new(".git");
-        assert!(should_ignore(".git", git_path, true, &None));
+    fn always_ignore_contains_common_build_dirs() {
+        assert!(ALWAYS_IGNORE.contains(&".git"));
+        assert!(ALWAYS_IGNORE.contains(&"node_modules"));
+        assert!(ALWAYS_IGNORE.contains(&"target"));
     }
 
     #[test]
-    fn should_not_ignore_src() {
-        let path = Path::new("src");
-        assert!(!should_ignore("src", path, true, &None));
+    fn is_path_ignored_empty_returns_false() {
+        assert!(!is_path_ignored(&[], Path::new("/any/path"), false));
     }
 }
