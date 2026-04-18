@@ -15,6 +15,8 @@ import type {
   SavedTab,
   SavedProjectLayout,
   AiCompletionNotification,
+  AiMarker,
+  AiUserSubmitPayload,
 } from './types';
 import {
   deepCloneTree,
@@ -324,6 +326,13 @@ interface AppStore {
   // Pane 状态
   updatePaneStatusByPty: (ptyId: number, status: PaneStatus) => void;
 
+  // AI 任务分段 marker
+  markersByPty: Map<number, AiMarker[]>;
+  addMarker: (payload: AiUserSubmitPayload, xtermMarkerId: number) => string;
+  clearMarkersForPty: (ptyId: number) => void;
+  pruneDisposed: (ptyId: number, isDisposed: (xtermMarkerId: number) => boolean) => void;
+  getMarkersForPty: (ptyId: number) => AiMarker[];
+
   // Notifications
   notifications: AiCompletionNotification[];
   pushNotification: (n: Omit<AiCompletionNotification, 'id' | 'timestamp'>) => void;
@@ -340,7 +349,7 @@ interface AppStore {
   moveItem: (itemId: string, targetGroupId: string | null, index?: number) => void;
 }
 
-export const useAppStore = create<AppStore>((set) => ({
+export const useAppStore = create<AppStore>((set, get) => ({
   config: {
     projects: [],
     defaultShell: '',
@@ -362,6 +371,7 @@ export const useAppStore = create<AppStore>((set) => ({
   activeProjectId: null,
   projectStates: new Map(),
   notifications: [],
+  markersByPty: new Map(),
 
   setActiveProject: (id) =>
     set((state) => {
@@ -395,7 +405,16 @@ export const useAppStore = create<AppStore>((set) => ({
       };
     }),
 
-  removeProject: (id) =>
+  removeProject: (id) => {
+    // 清理该项目下所有 pane 的 AI markers,防止内存泄漏
+    const removingPs = get().projectStates.get(id);
+    if (removingPs) {
+      for (const tab of removingPs.tabs) {
+        for (const ptyId of collectPtyIds(tab.splitLayout)) {
+          get().clearMarkersForPty(ptyId);
+        }
+      }
+    }
     set((state) => {
       expandedDirsMap.delete(id);
       const timer = saveExpandedTimers.get(id);
@@ -423,7 +442,8 @@ export const useAppStore = create<AppStore>((set) => ({
         activeProjectId: newActive,
         notifications: state.notifications.filter((n) => n.projectId !== id),
       };
-    }),
+    });
+  },
 
   renameProject: (id, name) =>
     set((state) => ({
@@ -448,17 +468,25 @@ export const useAppStore = create<AppStore>((set) => ({
       return { projectStates: newStates };
     }),
 
-  removeTab: (projectId, tabId) =>
+  removeTab: (projectId, tabId) => {
+    const ps = get().projectStates.get(projectId);
+    const closingTab = ps?.tabs.find((t) => t.id === tabId);
+    if (closingTab) {
+      for (const ptyId of collectPtyIds(closingTab.splitLayout)) {
+        get().clearMarkersForPty(ptyId);
+      }
+    }
     set((state) => {
       const newStates = new Map(state.projectStates);
-      const ps = newStates.get(projectId);
-      if (!ps) return state;
-      const newTabs = ps.tabs.filter((t) => t.id !== tabId);
+      const curPs = newStates.get(projectId);
+      if (!curPs) return state;
+      const newTabs = curPs.tabs.filter((t) => t.id !== tabId);
       const newActive =
-        ps.activeTabId === tabId ? (newTabs[newTabs.length - 1]?.id ?? '') : ps.activeTabId;
-      newStates.set(projectId, { ...ps, tabs: newTabs, activeTabId: newActive });
+        curPs.activeTabId === tabId ? (newTabs[newTabs.length - 1]?.id ?? '') : curPs.activeTabId;
+      newStates.set(projectId, { ...curPs, tabs: newTabs, activeTabId: newActive });
       return { projectStates: newStates };
-    }),
+    });
+  },
 
   setActiveTab: (projectId, tabId) =>
     set((state) => {
@@ -561,6 +589,51 @@ export const useAppStore = create<AppStore>((set) => ({
 
       return { projectStates: newStates };
     }),
+
+  addMarker: (payload, xtermMarkerId) => {
+    const id = crypto.randomUUID();
+    set((state) => {
+      const next = new Map(state.markersByPty);
+      const existing = next.get(payload.ptyId) ?? [];
+      const updated = existing.map((m, idx) =>
+        idx === existing.length - 1 ? { ...m, inProgress: false } : m
+      );
+      const marker: AiMarker = {
+        id,
+        seq: updated.length + 1,
+        ptyId: payload.ptyId,
+        line: payload.line,
+        ts: payload.ts,
+        xtermMarkerId,
+        inProgress: true,
+      };
+      next.set(payload.ptyId, [...updated, marker]);
+      return { markersByPty: next };
+    });
+    return id;
+  },
+
+  clearMarkersForPty: (ptyId) =>
+    set((state) => {
+      if (!state.markersByPty.has(ptyId)) return state;
+      const next = new Map(state.markersByPty);
+      next.delete(ptyId);
+      return { markersByPty: next };
+    }),
+
+  pruneDisposed: (ptyId, isDisposed) =>
+    set((state) => {
+      const list = state.markersByPty.get(ptyId);
+      if (!list || list.length === 0) return state;
+      const filtered = list.filter((m) => !isDisposed(m.xtermMarkerId));
+      if (filtered.length === list.length) return state;
+      const next = new Map(state.markersByPty);
+      if (filtered.length === 0) next.delete(ptyId);
+      else next.set(ptyId, filtered);
+      return { markersByPty: next };
+    }),
+
+  getMarkersForPty: (ptyId) => get().markersByPty.get(ptyId) ?? [],
 
   pushNotification: (n) => {
     const id = genId();
