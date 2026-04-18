@@ -406,19 +406,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }),
 
   removeProject: (id) => {
-    // 清理该项目下所有 pane 的 AI markers,防止内存泄漏
-    const removingPs = get().projectStates.get(id);
-    if (removingPs) {
-      for (const tab of removingPs.tabs) {
-        for (const ptyId of collectPtyIds(tab.splitLayout)) {
-          get().clearMarkersForPty(ptyId);
-        }
-      }
-    }
     set((state) => {
+      // 非纯状态副作用:清理运行时 Map / timer(不参与 zustand 状态)
       expandedDirsMap.delete(id);
       const timer = saveExpandedTimers.get(id);
       if (timer) { clearTimeout(timer); saveExpandedTimers.delete(id); }
+
+      // 合并清理该项目下所有 pane 的 AI markers,防止内存泄漏
+      const removingPs = state.projectStates.get(id);
+      let newMarkers = state.markersByPty;
+      if (removingPs) {
+        const ptyIds: number[] = [];
+        for (const tab of removingPs.tabs) {
+          ptyIds.push(...collectPtyIds(tab.splitLayout));
+        }
+        if (ptyIds.some((pid) => newMarkers.has(pid))) {
+          newMarkers = new Map(newMarkers);
+          for (const pid of ptyIds) newMarkers.delete(pid);
+        }
+      }
 
       const newTree = deepCloneTree(state.config.projectTree ?? []);
       removeProjectFromTree(newTree, id);
@@ -441,6 +447,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         projectStates: newStates,
         activeProjectId: newActive,
         notifications: state.notifications.filter((n) => n.projectId !== id),
+        markersByPty: newMarkers,
       };
     });
   },
@@ -468,25 +475,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return { projectStates: newStates };
     }),
 
-  removeTab: (projectId, tabId) => {
-    const ps = get().projectStates.get(projectId);
-    const closingTab = ps?.tabs.find((t) => t.id === tabId);
-    if (closingTab) {
-      for (const ptyId of collectPtyIds(closingTab.splitLayout)) {
-        get().clearMarkersForPty(ptyId);
-      }
-    }
+  removeTab: (projectId, tabId) =>
     set((state) => {
+      const ps = state.projectStates.get(projectId);
+      if (!ps) return state;
+      const closingTab = ps.tabs.find((t) => t.id === tabId);
+      if (!closingTab) return state;
+
+      // 合并清理该 tab 下所有 pane 的 AI markers,避免多次 set 触发的中间态
+      const ptyIds = collectPtyIds(closingTab.splitLayout);
+      let newMarkers = state.markersByPty;
+      if (ptyIds.some((id) => newMarkers.has(id))) {
+        newMarkers = new Map(newMarkers);
+        for (const id of ptyIds) newMarkers.delete(id);
+      }
+
       const newStates = new Map(state.projectStates);
-      const curPs = newStates.get(projectId);
-      if (!curPs) return state;
-      const newTabs = curPs.tabs.filter((t) => t.id !== tabId);
+      const newTabs = ps.tabs.filter((t) => t.id !== tabId);
       const newActive =
-        curPs.activeTabId === tabId ? (newTabs[newTabs.length - 1]?.id ?? '') : curPs.activeTabId;
-      newStates.set(projectId, { ...curPs, tabs: newTabs, activeTabId: newActive });
-      return { projectStates: newStates };
-    });
-  },
+        ps.activeTabId === tabId ? (newTabs[newTabs.length - 1]?.id ?? '') : ps.activeTabId;
+      newStates.set(projectId, { ...ps, tabs: newTabs, activeTabId: newActive });
+      return { projectStates: newStates, markersByPty: newMarkers };
+    }),
 
   setActiveTab: (projectId, tabId) =>
     set((state) => {
