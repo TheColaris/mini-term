@@ -22,6 +22,20 @@ struct PtyExitPayload {
     exit_code: i32,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserSubmit {
+    pub line: String,
+    pub ts: i64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiUserSubmitPayload {
+    pub pty_id: u32,
+    pub line: String,
+    pub ts: i64,
+}
+
 struct PtyInstance {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
@@ -247,6 +261,7 @@ pub struct PtyManager {
     input_states: Arc<Mutex<HashMap<u32, InputState>>>,
     last_ctrlc: Arc<Mutex<HashMap<u32, Instant>>>,
     last_enter: Arc<Mutex<HashMap<u32, Instant>>>,
+    pending_submits: Arc<Mutex<HashMap<u32, Vec<UserSubmit>>>>,
     /// resize 冷却窗口结束时间:在此之前 PTY 输出不刷新 last_output
     resize_cooldown_until: Arc<Mutex<HashMap<u32, Instant>>>,
 }
@@ -261,6 +276,7 @@ impl PtyManager {
             input_states: Arc::new(Mutex::new(HashMap::new())),
             last_ctrlc: Arc::new(Mutex::new(HashMap::new())),
             last_enter: Arc::new(Mutex::new(HashMap::new())),
+            pending_submits: Arc::new(Mutex::new(HashMap::new())),
             resize_cooldown_until: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -276,6 +292,14 @@ impl PtyManager {
 
     pub fn is_ai_session(&self, pty_id: u32) -> bool {
         self.ai_sessions.lock().unwrap().contains(&pty_id)
+    }
+
+    pub fn drain_submits(&self, pty_id: u32) -> Vec<UserSubmit> {
+        self.pending_submits
+            .lock()
+            .unwrap()
+            .remove(&pty_id)
+            .unwrap_or_default()
     }
 
     /// 追踪用户输入，检测 AI 命令（claude/codex）的执行与退出
@@ -938,5 +962,26 @@ mod tests {
         mgr.track_input(1, "\x1b[D");
         mgr.track_input(1, "o\r");
         assert!(!mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn drain_submits_returns_empty_initially() {
+        let mgr = PtyManager::new();
+        assert!(mgr.drain_submits(1).is_empty());
+    }
+
+    #[test]
+    fn drain_submits_clears_after_call() {
+        let mgr = PtyManager::new();
+        mgr.pending_submits
+            .lock()
+            .unwrap()
+            .entry(1)
+            .or_default()
+            .push(UserSubmit { line: "test".into(), ts: 0 });
+        let first = mgr.drain_submits(1);
+        assert_eq!(first.len(), 1);
+        let second = mgr.drain_submits(1);
+        assert!(second.is_empty());
     }
 }
