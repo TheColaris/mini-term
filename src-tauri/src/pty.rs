@@ -353,7 +353,24 @@ impl PtyManager {
                             .lock()
                             .unwrap()
                             .insert(pty_id, Instant::now());
-                        let cmd = state.take_line().trim().to_lowercase();
+                        let raw = state.take_line();
+                        let trimmed = raw.trim();
+                        if !trimmed.is_empty() && self.is_ai_session(pty_id) {
+                            let ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as i64)
+                                .unwrap_or(0);
+                            self.pending_submits
+                                .lock()
+                                .unwrap()
+                                .entry(pty_id)
+                                .or_default()
+                                .push(UserSubmit {
+                                    line: trimmed.to_string(),
+                                    ts,
+                                });
+                        }
+                        let cmd = trimmed.to_lowercase();
                         if in_ai {
                             // AI 会话中：识别显式退出命令
                             if AI_EXIT_COMMANDS.iter().any(|&c| cmd == c) {
@@ -983,5 +1000,63 @@ mod tests {
         assert_eq!(first.len(), 1);
         let second = mgr.drain_submits(1);
         assert!(second.is_empty());
+    }
+
+    #[test]
+    fn track_input_does_not_submit_entering_command_itself() {
+        // "claude\r" 本身是进入 AI 会话的命令,此时 is_ai_session 还是 false
+        // 因为 ai_sessions.insert 发生在 Enter 分支的后续 enter_ai 处理中
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        assert!(mgr.drain_submits(1).is_empty());
+        assert!(mgr.is_ai_session(1)); // 但会话状态已建立
+    }
+
+    #[test]
+    fn track_input_pushes_submit_in_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "fix the bug\r");
+        let submits = mgr.drain_submits(1);
+        assert_eq!(submits.len(), 1);
+        assert_eq!(submits[0].line, "fix the bug");
+        assert!(submits[0].ts > 0);
+    }
+
+    #[test]
+    fn track_input_no_submit_outside_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "npm install\r");
+        assert!(mgr.drain_submits(1).is_empty());
+    }
+
+    #[test]
+    fn track_input_no_submit_on_empty_enter() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "\r"); // 空回车
+        mgr.track_input(1, "   \r"); // 仅空白
+        assert!(mgr.drain_submits(1).is_empty());
+    }
+
+    #[test]
+    fn track_input_submits_multiple_in_working_window() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "first question\r");
+        mgr.track_input(1, "follow up\r"); // ai-working 中再次 Enter
+        let submits = mgr.drain_submits(1);
+        assert_eq!(submits.len(), 2);
+        assert_eq!(submits[0].line, "first question");
+        assert_eq!(submits[1].line, "follow up");
+    }
+
+    #[test]
+    fn track_input_no_submit_on_arrow_keys() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "\x1b[A"); // 上方向键
+        mgr.track_input(1, "\x1b[B"); // 下方向键
+        assert!(mgr.drain_submits(1).is_empty());
     }
 }
