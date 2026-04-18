@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore, genId } from '../store';
 import { TerminalInstance } from './TerminalInstance';
 import { StatusDot } from './StatusDot';
+import { MarkerList } from './MarkerList';
 import { showContextMenu } from '../utils/contextMenu';
 import { showConfirm, showPrompt } from '../utils/prompt';
 import { disposeTerminal } from '../utils/terminalCache';
@@ -79,6 +80,7 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
 
     await invoke('kill_pty', { ptyId: pane.ptyId });
     disposeTerminal(pane.ptyId);
+    useAppStore.getState().clearMarkersForPty(pane.ptyId);
 
     const remaining = node.panes.filter((p) => p.id !== paneId);
     if (remaining.length === 0) {
@@ -131,9 +133,31 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
     for (const pane of node.panes) {
       await invoke('kill_pty', { ptyId: pane.ptyId });
       disposeTerminal(pane.ptyId);
+      useAppStore.getState().clearMarkersForPty(pane.ptyId);
     }
     onClosePane();
   }, [node.panes, onClosePane]);
+
+  const [markerOpen, setMarkerOpen] = useState(false);
+  const markers = useAppStore(
+    (s) => (activePane ? s.markersByPty.get(activePane.ptyId) : undefined) ?? [],
+  );
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!markerOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setMarkerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [markerOpen]);
+
+  useEffect(() => {
+    setMarkerOpen(false);
+  }, [activePane?.ptyId]);
 
   if (!activePane) return null;
 
@@ -194,6 +218,34 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
         <div
           className="ml-auto flex items-center gap-0.5 px-2 text-[12px]"
         >
+          {markers.length > 0 && (
+            <div className="relative mr-1" ref={popoverRef}>
+              <button
+                type="button"
+                className="px-1.5 py-0.5 text-[11px] rounded text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--border-subtle)] flex items-center gap-1 transition-colors"
+                onClick={() => setMarkerOpen((v) => !v)}
+                title="AI 任务标记"
+              >
+                <span>⚑</span>
+                <span className="tabular-nums">{markers.length}</span>
+              </button>
+              {markerOpen && (
+                <div
+                  className="absolute right-0 top-full mt-1 z-20 rounded-md border shadow-lg"
+                  style={{
+                    background: 'var(--bg-elevated)',
+                    borderColor: 'var(--border-subtle)',
+                  }}
+                >
+                  <MarkerList
+                    ptyId={activePane.ptyId}
+                    markers={markers}
+                    onClose={() => setMarkerOpen(false)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
           <div
             className="flex items-center gap-0.5 transition-opacity duration-150"
             style={{ opacity: headerHover ? 1 : 0 }}
