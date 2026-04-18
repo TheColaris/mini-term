@@ -8,7 +8,7 @@
  * unmount 时仅分离 wrapper，不销毁 Terminal。仅在面板真正关闭时调用 dispose。
  */
 
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type IMarker, type IDecoration } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { invoke } from '@tauri-apps/api/core';
@@ -91,6 +91,11 @@ const cache = new Map<number, CachedEntry>();
 const enqueuePtyWrite = createPtyWriteQueue((ptyId, data) =>
   invoke('write_pty', { ptyId, data })
 );
+
+const markerInstancesByPty = new Map<number, Map<number, IMarker>>();
+
+const FLASH_DECORATION_CSS_BG = 'rgba(245, 197, 24, 0.33)';
+const FLASH_DURATION_MS = 300;
 
 export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   const existing = cache.get(ptyId);
@@ -211,6 +216,50 @@ export function disposeTerminal(ptyId: number): void {
   entry.wrapper.remove();
   entry.cleanup();
   cache.delete(ptyId);
+  clearMarkerInstances(ptyId);
+}
+
+export function registerAiMarker(ptyId: number): IMarker | null {
+  const cached = getCachedTerminal(ptyId);
+  if (!cached) return null;
+  const marker = cached.term.registerMarker(0);
+  if (!marker) return null;
+  let inner = markerInstancesByPty.get(ptyId);
+  if (!inner) {
+    inner = new Map();
+    markerInstancesByPty.set(ptyId, inner);
+  }
+  inner.set(marker.id, marker);
+  marker.onDispose(() => {
+    markerInstancesByPty.get(ptyId)?.delete(marker.id);
+  });
+  return marker;
+}
+
+export function scrollToMarker(ptyId: number, xtermMarkerId: number): void {
+  const cached = getCachedTerminal(ptyId);
+  const marker = markerInstancesByPty.get(ptyId)?.get(xtermMarkerId);
+  if (!cached || !marker || marker.isDisposed) return;
+  cached.term.scrollToLine(marker.line);
+  flashLine(cached.term, marker);
+}
+
+function flashLine(term: Terminal, marker: IMarker): void {
+  const deco: IDecoration | undefined = term.registerDecoration({
+    marker,
+    backgroundColor: FLASH_DECORATION_CSS_BG,
+  });
+  if (!deco) return;
+  setTimeout(() => deco.dispose(), FLASH_DURATION_MS);
+}
+
+export function isMarkerDisposed(ptyId: number, xtermMarkerId: number): boolean {
+  const marker = markerInstancesByPty.get(ptyId)?.get(xtermMarkerId);
+  return !marker || marker.isDisposed;
+}
+
+export function clearMarkerInstances(ptyId: number): void {
+  markerInstancesByPty.delete(ptyId);
 }
 
 export function updateAllTerminalThemes(terminalFollowTheme: boolean): void {
