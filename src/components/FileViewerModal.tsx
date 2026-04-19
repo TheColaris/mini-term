@@ -6,9 +6,10 @@ interface FileViewerModalProps {
   open: boolean;
   onClose: () => void;
   filePath: string;
+  projectRoot: string;
 }
 
-export function FileViewerModal({ open, onClose, filePath }: FileViewerModalProps) {
+export function FileViewerModal({ open, onClose, filePath, projectRoot }: FileViewerModalProps) {
   const [result, setResult] = useState<FileContentResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -19,11 +20,11 @@ export function FileViewerModal({ open, onClose, filePath }: FileViewerModalProp
     setError('');
     setResult(null);
 
-    invoke<FileContentResult>('read_file_content', { path: filePath })
+    invoke<FileContentResult>('read_file_content', { projectRoot, path: filePath })
       .then(setResult)
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
-  }, [open, filePath]);
+  }, [open, filePath, projectRoot]);
 
   useEffect(() => {
     if (!open) return;

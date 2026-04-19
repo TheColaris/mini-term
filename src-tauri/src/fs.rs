@@ -65,6 +65,52 @@ fn is_path_ignored(gitignores: &[Gitignore], full_path: &Path, is_dir: bool) -> 
 
 const ALWAYS_IGNORE: &[&str] = &[".git", "node_modules", "target", ".next", "dist", "__pycache__", ".superpowers"];
 
+/// 校验 target 必须在 project_root 内,防止前端构造 `../../etc/passwd` 之类的
+/// 路径逃逸出项目根目录。
+///
+/// 用 `canonicalize` 同时解析符号链接和 `..`,要求 project_root 必须存在。
+/// `must_exist=true` 时 target 也必须存在(用于 list/read/rename 旧路径);
+/// `must_exist=false` 时仅 canonicalize 父目录后拼上 file_name,允许 target
+/// 本身不存在(用于 create_file/create_directory 这类创建场景)。
+///
+/// 返回校验后的绝对路径,后续 IO 直接用它,避免重复访问磁盘。
+fn verify_under_project_root(
+    project_root: &str,
+    target: &str,
+    must_exist: bool,
+) -> Result<PathBuf, String> {
+    let root = Path::new(project_root)
+        .canonicalize()
+        .map_err(|e| format!("项目根目录无效: {}: {}", project_root, e))?;
+
+    let target_path = Path::new(target);
+    let canon = if must_exist {
+        target_path
+            .canonicalize()
+            .map_err(|e| format!("路径不可访问: {}: {}", target, e))?
+    } else {
+        let parent = target_path
+            .parent()
+            .ok_or_else(|| format!("无法获取父目录: {}", target))?;
+        let parent_canon = parent
+            .canonicalize()
+            .map_err(|e| format!("父目录不可访问: {}: {}", parent.display(), e))?;
+        let name = target_path
+            .file_name()
+            .ok_or_else(|| format!("缺少文件名: {}", target))?;
+        parent_canon.join(name)
+    };
+
+    if !canon.starts_with(&root) {
+        return Err(format!(
+            "路径不在项目根目录内: {} (root={})",
+            canon.display(),
+            root.display()
+        ));
+    }
+    Ok(canon)
+}
+
 /// 过滤出有效的目录路径（用于拖拽添加项目时验证）
 #[tauri::command]
 pub fn filter_directories(paths: Vec<String>) -> Vec<String> {
@@ -76,12 +122,12 @@ pub fn filter_directories(paths: Vec<String>) -> Vec<String> {
 
 #[tauri::command]
 pub fn list_directory(project_root: String, path: String) -> Result<Vec<FileEntry>, String> {
-    let dir = Path::new(&path);
+    let dir = verify_under_project_root(&project_root, &path, true)?;
     if !dir.is_dir() {
         return Err(format!("Not a directory: {}", path));
     }
-    let gitignores = collect_gitignores(Path::new(&project_root), dir);
-    let mut entries: Vec<FileEntry> = fs::read_dir(dir)
+    let gitignores = collect_gitignores(Path::new(&project_root), &dir);
+    let mut entries: Vec<FileEntry> = fs::read_dir(&dir)
         .map_err(|e| e.to_string())?
         .filter_map(|entry| {
             let entry = entry.ok()?;
@@ -168,16 +214,16 @@ pub struct FileContentResult {
 const MAX_FILE_VIEW_SIZE: u64 = 1_048_576; // 1MB
 
 #[tauri::command]
-pub fn read_file_content(path: String) -> Result<FileContentResult, String> {
-    let p = Path::new(&path);
+pub fn read_file_content(project_root: String, path: String) -> Result<FileContentResult, String> {
+    let p = verify_under_project_root(&project_root, &path, true)?;
     if !p.is_file() {
         return Err(format!("不是文件: {}", path));
     }
-    let metadata = fs::metadata(p).map_err(|e| e.to_string())?;
+    let metadata = fs::metadata(&p).map_err(|e| e.to_string())?;
     if metadata.len() > MAX_FILE_VIEW_SIZE {
         return Ok(FileContentResult { content: String::new(), is_binary: false, too_large: true });
     }
-    let bytes = fs::read(p).map_err(|e| e.to_string())?;
+    let bytes = fs::read(&p).map_err(|e| e.to_string())?;
     match String::from_utf8(bytes) {
         Ok(s) => Ok(FileContentResult { content: s, is_binary: false, too_large: false }),
         Err(_) => Ok(FileContentResult { content: String::new(), is_binary: true, too_large: false }),
@@ -185,21 +231,21 @@ pub fn read_file_content(path: String) -> Result<FileContentResult, String> {
 }
 
 #[tauri::command]
-pub fn create_file(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
+pub fn create_file(project_root: String, path: String) -> Result<(), String> {
+    let p = verify_under_project_root(&project_root, &path, false)?;
     if p.exists() {
         return Err(format!("已存在: {}", path));
     }
-    fs::write(p, "").map_err(|e| e.to_string())
+    fs::write(&p, "").map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn create_directory(path: String) -> Result<(), String> {
-    let p = Path::new(&path);
+pub fn create_directory(project_root: String, path: String) -> Result<(), String> {
+    let p = verify_under_project_root(&project_root, &path, false)?;
     if p.exists() {
         return Err(format!("已存在: {}", path));
     }
-    fs::create_dir(p).map_err(|e| e.to_string())
+    fs::create_dir(&p).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -210,18 +256,27 @@ pub fn unwatch_directory(state: tauri::State<'_, FsWatcherManager>, path: String
 }
 
 #[tauri::command]
-pub fn rename_entry(old_path: String, new_name: String) -> Result<String, String> {
-    let p = Path::new(&old_path);
-    if !p.exists() {
-        return Err(format!("路径不存在: {}", old_path));
-    }
-    let parent = p.parent().ok_or("无法获取父目录")?;
+pub fn rename_entry(
+    project_root: String,
+    old_path: String,
+    new_name: String,
+) -> Result<String, String> {
+    let old_canon = verify_under_project_root(&project_root, &old_path, true)?;
+    let parent = old_canon
+        .parent()
+        .ok_or_else(|| "无法获取父目录".to_string())?;
     let new_path = parent.join(&new_name);
-    if new_path.exists() {
-        return Err(format!("目标已存在: {}", new_path.display()));
+    // new_name 可能含 `../` 等,必须再校验一遍新路径仍在 project_root 内
+    let new_canon = verify_under_project_root(
+        &project_root,
+        new_path.to_string_lossy().as_ref(),
+        false,
+    )?;
+    if new_canon.exists() {
+        return Err(format!("目标已存在: {}", new_canon.display()));
     }
-    fs::rename(p, &new_path).map_err(|e| e.to_string())?;
-    Ok(new_path.to_string_lossy().to_string())
+    fs::rename(&old_canon, &new_canon).map_err(|e| e.to_string())?;
+    Ok(new_canon.to_string_lossy().to_string())
 }
 
 #[cfg(test)]
@@ -238,5 +293,88 @@ mod tests {
     #[test]
     fn is_path_ignored_empty_returns_false() {
         assert!(!is_path_ignored(&[], Path::new("/any/path"), false));
+    }
+
+    fn make_test_project() -> (PathBuf, PathBuf) {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("mini-term-fs-test-{ts}"));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let inner_file = root.join("inside.txt");
+        fs::write(&inner_file, "hi").unwrap();
+        (root, inner_file)
+    }
+
+    #[test]
+    fn verify_accepts_path_inside_project() {
+        let (root, file) = make_test_project();
+        let canon = verify_under_project_root(
+            root.to_string_lossy().as_ref(),
+            file.to_string_lossy().as_ref(),
+            true,
+        )
+        .unwrap();
+        assert!(canon.starts_with(root.canonicalize().unwrap()));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn verify_rejects_dotdot_escape() {
+        let (root, _) = make_test_project();
+        // 构造一个理论上指向 root 之外的相对路径(../something)
+        let escape = root.join("..").join("definitely-not-here.txt");
+        let err = verify_under_project_root(
+            root.to_string_lossy().as_ref(),
+            escape.to_string_lossy().as_ref(),
+            false,
+        )
+        .unwrap_err();
+        assert!(err.contains("不在项目根目录内") || err.contains("不可访问"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn verify_rejects_unrelated_absolute_path() {
+        let (root, _) = make_test_project();
+        // 创建另一个完全独立的目录,模拟"读项目外的文件"
+        let other = std::env::temp_dir().join(format!(
+            "mini-term-fs-other-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&other).unwrap();
+        let other_file = other.join("evil.txt");
+        fs::write(&other_file, "x").unwrap();
+
+        let err = verify_under_project_root(
+            root.to_string_lossy().as_ref(),
+            other_file.to_string_lossy().as_ref(),
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("不在项目根目录内"));
+
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&other).ok();
+    }
+
+    #[test]
+    fn verify_create_file_in_project() {
+        let (root, _) = make_test_project();
+        let new_file = root.join("brand-new.txt");
+        let canon = verify_under_project_root(
+            root.to_string_lossy().as_ref(),
+            new_file.to_string_lossy().as_ref(),
+            false,
+        )
+        .unwrap();
+        assert!(canon.starts_with(root.canonicalize().unwrap()));
+        assert!(!canon.exists()); // 文件还没创建
+        fs::remove_dir_all(&root).ok();
     }
 }

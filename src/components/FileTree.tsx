@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { message } from '@tauri-apps/plugin-dialog';
-import { revealItemInDir, openPath } from '@tauri-apps/plugin-opener';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAppStore, isExpanded, toggleExpandedDir } from '../store';
 import { useTauriEvent } from '../hooks/useTauriEvent';
@@ -116,7 +116,7 @@ function TreeNode({ entry, projectRoot, depth, gitStatusMap, onViewDiff, onViewF
           if (!entry.isDir) {
             items.unshift({
               label: '使用默认工具打开',
-              onClick: () => openPath(entry.path),
+              onClick: () => invoke('open_path_with_default_app', { path: entry.path }),
             });
           }
           items.push({ separator: true });
@@ -126,7 +126,7 @@ function TreeNode({ entry, projectRoot, depth, gitStatusMap, onViewDiff, onViewF
               const newName = await showPrompt('重命名', '请输入新名称', entry.name);
               if (!newName?.trim() || newName.trim() === entry.name) return;
               try {
-                await invoke('rename_entry', { oldPath: entry.path, newName: newName.trim() });
+                await invoke('rename_entry', { projectRoot, oldPath: entry.path, newName: newName.trim() });
                 loadChildren();
               } catch (err) {
                 console.error('重命名失败:', err);
@@ -141,7 +141,7 @@ function TreeNode({ entry, projectRoot, depth, gitStatusMap, onViewDiff, onViewF
                 const name = await showPrompt('新建文件', '请输入文件名');
                 if (!name?.trim()) return;
                 const sep = entry.path.includes('/') ? '/' : '\\';
-                await invoke('create_file', { path: `${entry.path}${sep}${name.trim()}` });
+                await invoke('create_file', { projectRoot, path: `${entry.path}${sep}${name.trim()}` });
                 if (!expanded) handleToggle();
                 else loadChildren();
               },
@@ -152,7 +152,7 @@ function TreeNode({ entry, projectRoot, depth, gitStatusMap, onViewDiff, onViewF
                 const name = await showPrompt('新建文件夹', '请输入文件夹名');
                 if (!name?.trim()) return;
                 const sep = entry.path.includes('/') ? '/' : '\\';
-                await invoke('create_directory', { path: `${entry.path}${sep}${name.trim()}` });
+                await invoke('create_directory', { projectRoot, path: `${entry.path}${sep}${name.trim()}` });
                 if (!expanded) handleToggle();
                 else loadChildren();
               },
@@ -350,7 +350,7 @@ export function FileTree() {
         onClick: async () => {
           const name = await showPrompt('新建文件', '请输入文件名');
           if (!name?.trim()) return;
-          await invoke('create_file', { path: `${project.path}${sep}${name.trim()}` });
+          await invoke('create_file', { projectRoot: project.path, path: `${project.path}${sep}${name.trim()}` });
           loadRootEntries();
         },
       },
@@ -359,7 +359,7 @@ export function FileTree() {
         onClick: async () => {
           const name = await showPrompt('新建文件夹', '请输入文件夹名');
           if (!name?.trim()) return;
-          await invoke('create_directory', { path: `${project.path}${sep}${name.trim()}` });
+          await invoke('create_directory', { projectRoot: project.path, path: `${project.path}${sep}${name.trim()}` });
           loadRootEntries();
         },
       },
@@ -416,11 +416,12 @@ export function FileTree() {
           />
         ))}
       </div>
-      {viewFilePath && (
+      {viewFilePath && project && (
         <FileViewerModal
           open={!!viewFilePath}
           onClose={() => setViewFilePath(null)}
           filePath={viewFilePath}
+          projectRoot={project.path}
         />
       )}
       {diffTarget && (
