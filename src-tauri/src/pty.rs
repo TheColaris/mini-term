@@ -22,6 +22,20 @@ struct PtyExitPayload {
     exit_code: i32,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserSubmit {
+    pub line: String,
+    pub ts: i64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiUserSubmitPayload {
+    pub pty_id: u32,
+    pub line: String,
+    pub ts: i64,
+}
+
 struct PtyInstance {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
@@ -247,6 +261,7 @@ pub struct PtyManager {
     input_states: Arc<Mutex<HashMap<u32, InputState>>>,
     last_ctrlc: Arc<Mutex<HashMap<u32, Instant>>>,
     last_enter: Arc<Mutex<HashMap<u32, Instant>>>,
+    pending_submits: Arc<Mutex<HashMap<u32, Vec<UserSubmit>>>>,
     /// resize 冷却窗口结束时间:在此之前 PTY 输出不刷新 last_output
     resize_cooldown_until: Arc<Mutex<HashMap<u32, Instant>>>,
 }
@@ -261,6 +276,7 @@ impl PtyManager {
             input_states: Arc::new(Mutex::new(HashMap::new())),
             last_ctrlc: Arc::new(Mutex::new(HashMap::new())),
             last_enter: Arc::new(Mutex::new(HashMap::new())),
+            pending_submits: Arc::new(Mutex::new(HashMap::new())),
             resize_cooldown_until: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -276,6 +292,14 @@ impl PtyManager {
 
     pub fn is_ai_session(&self, pty_id: u32) -> bool {
         self.ai_sessions.lock().unwrap().contains(&pty_id)
+    }
+
+    pub fn drain_submits(&self, pty_id: u32) -> Vec<UserSubmit> {
+        self.pending_submits
+            .lock()
+            .unwrap()
+            .remove(&pty_id)
+            .unwrap_or_default()
     }
 
     /// 追踪用户输入，检测 AI 命令（claude/codex）的执行与退出
@@ -329,7 +353,24 @@ impl PtyManager {
                             .lock()
                             .unwrap()
                             .insert(pty_id, Instant::now());
-                        let cmd = state.take_line().trim().to_lowercase();
+                        let raw = state.take_line();
+                        let trimmed = raw.trim();
+                        if !trimmed.is_empty() && self.is_ai_session(pty_id) {
+                            let ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as i64)
+                                .unwrap_or(0);
+                            self.pending_submits
+                                .lock()
+                                .unwrap()
+                                .entry(pty_id)
+                                .or_default()
+                                .push(UserSubmit {
+                                    line: trimmed.to_string(),
+                                    ts,
+                                });
+                        }
+                        let cmd = trimmed.to_lowercase();
                         if in_ai {
                             // AI 会话中：识别显式退出命令
                             if AI_EXIT_COMMANDS.iter().any(|&c| cmd == c) {
@@ -632,6 +673,7 @@ fn write_pty_chunked(writer: &mut dyn Write, data: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn write_pty(
+    app: tauri::AppHandle,
     state: tauri::State<'_, PtyManager>,
     pty_id: u32,
     data: String,
@@ -642,6 +684,17 @@ pub fn write_pty(
         write_pty_chunked(&mut *instance.writer, &data)?;
     }
     state.track_input(pty_id, &data);
+
+    for submit in state.drain_submits(pty_id) {
+        let _ = app.emit(
+            "ai-user-submit",
+            AiUserSubmitPayload {
+                pty_id,
+                line: submit.line,
+                ts: submit.ts,
+            },
+        );
+    }
     Ok(())
 }
 
@@ -686,6 +739,7 @@ pub fn kill_pty(state: tauri::State<'_, PtyManager>, pty_id: u32) -> Result<(), 
     state.input_states.lock().unwrap().remove(&pty_id);
     state.last_ctrlc.lock().unwrap().remove(&pty_id);
     state.last_enter.lock().unwrap().remove(&pty_id);
+    state.pending_submits.lock().unwrap().remove(&pty_id);
     state.resize_cooldown_until.lock().unwrap().remove(&pty_id);
 
     // Drop the PTY instance on a background thread.
@@ -938,5 +992,84 @@ mod tests {
         mgr.track_input(1, "\x1b[D");
         mgr.track_input(1, "o\r");
         assert!(!mgr.is_ai_session(1));
+    }
+
+    #[test]
+    fn drain_submits_returns_empty_initially() {
+        let mgr = PtyManager::new();
+        assert!(mgr.drain_submits(1).is_empty());
+    }
+
+    #[test]
+    fn drain_submits_clears_after_call() {
+        let mgr = PtyManager::new();
+        mgr.pending_submits
+            .lock()
+            .unwrap()
+            .entry(1)
+            .or_default()
+            .push(UserSubmit { line: "test".into(), ts: 0 });
+        let first = mgr.drain_submits(1);
+        assert_eq!(first.len(), 1);
+        let second = mgr.drain_submits(1);
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn track_input_does_not_submit_entering_command_itself() {
+        // "claude\r" 本身是进入 AI 会话的命令,此时 is_ai_session 还是 false
+        // 因为 ai_sessions.insert 发生在 Enter 分支的后续 enter_ai 处理中
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        assert!(mgr.drain_submits(1).is_empty());
+        assert!(mgr.is_ai_session(1)); // 但会话状态已建立
+    }
+
+    #[test]
+    fn track_input_pushes_submit_in_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "fix the bug\r");
+        let submits = mgr.drain_submits(1);
+        assert_eq!(submits.len(), 1);
+        assert_eq!(submits[0].line, "fix the bug");
+        assert!(submits[0].ts > 0);
+    }
+
+    #[test]
+    fn track_input_no_submit_outside_ai_session() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "npm install\r");
+        assert!(mgr.drain_submits(1).is_empty());
+    }
+
+    #[test]
+    fn track_input_no_submit_on_empty_enter() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "\r"); // 空回车
+        mgr.track_input(1, "   \r"); // 仅空白
+        assert!(mgr.drain_submits(1).is_empty());
+    }
+
+    #[test]
+    fn track_input_submits_multiple_in_working_window() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "first question\r");
+        mgr.track_input(1, "follow up\r"); // ai-working 中再次 Enter
+        let submits = mgr.drain_submits(1);
+        assert_eq!(submits.len(), 2);
+        assert_eq!(submits[0].line, "first question");
+        assert_eq!(submits[1].line, "follow up");
+    }
+
+    #[test]
+    fn track_input_no_submit_on_arrow_keys() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "\x1b[A"); // 上方向键
+        mgr.track_input(1, "\x1b[B"); // 下方向键
+        assert!(mgr.drain_submits(1).is_empty());
     }
 }

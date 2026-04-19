@@ -226,3 +226,21 @@ export interface BranchInfo {
   isRemote: boolean;
   commitHash: string;
 }
+
+// === AI 任务分段 marker ===
+
+export interface AiUserSubmitPayload {
+  ptyId: number;
+  line: string;
+  ts: number;
+}
+
+export interface AiMarker {
+  id: string;            // UUID,store 索引与 React key
+  seq: number;           // 该 pane 内自增序号,UI 显示 "#N"
+  ptyId: number;
+  line: string;          // 用户输入原文(trim 后)
+  ts: number;            // epoch ms
+  xtermMarkerId: number; // xterm IMarker.id,用于查找 module-local 缓存
+  inProgress: boolean;   // 最后一个 marker 为 true,新 marker 到来时前一个翻 false
+}

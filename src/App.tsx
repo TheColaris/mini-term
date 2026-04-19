@@ -14,6 +14,8 @@ import { ActivityBar } from './components/ActivityBar';
 import { SettingsModal } from './components/SettingsModal';
 import { ToastContainer } from './components/ToastContainer';
 import { useTauriEvent } from './hooks/useTauriEvent';
+import { useAiSubmitMarker } from './hooks/useAiSubmitMarker';
+import { useMarkerHotkeys } from './hooks/useMarkerHotkeys';
 import { checkForUpdate, type ReleaseInfo } from './utils/updateChecker';
 import { applyTheme } from './utils/themeManager';
 import type { AppConfig, PtyStatusChangePayload, PtyExitPayload, PaneStatus } from './types';
@@ -115,6 +117,9 @@ export function App() {
       updatePaneStatusByPty(payload.ptyId, 'error');
     }
   }, [updatePaneStatusByPty]));
+
+  useAiSubmitMarker();
+  useMarkerHotkeys();
 
   // 关闭窗口时二次确认并保存布局
   useEffect(() => {

@@ -15,6 +15,8 @@ import type {
   SavedTab,
   SavedProjectLayout,
   AiCompletionNotification,
+  AiMarker,
+  AiUserSubmitPayload,
 } from './types';
 import {
   deepCloneTree,
@@ -324,6 +326,13 @@ interface AppStore {
   // Pane 状态
   updatePaneStatusByPty: (ptyId: number, status: PaneStatus) => void;
 
+  // AI 任务分段 marker
+  markersByPty: Map<number, AiMarker[]>;
+  addMarker: (payload: AiUserSubmitPayload, xtermMarkerId: number) => string;
+  clearMarkersForPty: (ptyId: number) => void;
+  pruneDisposed: (ptyId: number, isDisposed: (xtermMarkerId: number) => boolean) => void;
+  getMarkersForPty: (ptyId: number) => AiMarker[];
+
   // Notifications
   notifications: AiCompletionNotification[];
   pushNotification: (n: Omit<AiCompletionNotification, 'id' | 'timestamp'>) => void;
@@ -340,7 +349,7 @@ interface AppStore {
   moveItem: (itemId: string, targetGroupId: string | null, index?: number) => void;
 }
 
-export const useAppStore = create<AppStore>((set) => ({
+export const useAppStore = create<AppStore>((set, get) => ({
   config: {
     projects: [],
     defaultShell: '',
@@ -362,6 +371,7 @@ export const useAppStore = create<AppStore>((set) => ({
   activeProjectId: null,
   projectStates: new Map(),
   notifications: [],
+  markersByPty: new Map(),
 
   setActiveProject: (id) =>
     set((state) => {
@@ -395,11 +405,26 @@ export const useAppStore = create<AppStore>((set) => ({
       };
     }),
 
-  removeProject: (id) =>
+  removeProject: (id) => {
     set((state) => {
+      // 非纯状态副作用:清理运行时 Map / timer(不参与 zustand 状态)
       expandedDirsMap.delete(id);
       const timer = saveExpandedTimers.get(id);
       if (timer) { clearTimeout(timer); saveExpandedTimers.delete(id); }
+
+      // 合并清理该项目下所有 pane 的 AI markers,防止内存泄漏
+      const removingPs = state.projectStates.get(id);
+      let newMarkers = state.markersByPty;
+      if (removingPs) {
+        const ptyIds: number[] = [];
+        for (const tab of removingPs.tabs) {
+          ptyIds.push(...collectPtyIds(tab.splitLayout));
+        }
+        if (ptyIds.some((pid) => newMarkers.has(pid))) {
+          newMarkers = new Map(newMarkers);
+          for (const pid of ptyIds) newMarkers.delete(pid);
+        }
+      }
 
       const newTree = deepCloneTree(state.config.projectTree ?? []);
       removeProjectFromTree(newTree, id);
@@ -422,8 +447,10 @@ export const useAppStore = create<AppStore>((set) => ({
         projectStates: newStates,
         activeProjectId: newActive,
         notifications: state.notifications.filter((n) => n.projectId !== id),
+        markersByPty: newMarkers,
       };
-    }),
+    });
+  },
 
   renameProject: (id, name) =>
     set((state) => ({
@@ -450,14 +477,25 @@ export const useAppStore = create<AppStore>((set) => ({
 
   removeTab: (projectId, tabId) =>
     set((state) => {
-      const newStates = new Map(state.projectStates);
-      const ps = newStates.get(projectId);
+      const ps = state.projectStates.get(projectId);
       if (!ps) return state;
+      const closingTab = ps.tabs.find((t) => t.id === tabId);
+      if (!closingTab) return state;
+
+      // 合并清理该 tab 下所有 pane 的 AI markers,避免多次 set 触发的中间态
+      const ptyIds = collectPtyIds(closingTab.splitLayout);
+      let newMarkers = state.markersByPty;
+      if (ptyIds.some((id) => newMarkers.has(id))) {
+        newMarkers = new Map(newMarkers);
+        for (const id of ptyIds) newMarkers.delete(id);
+      }
+
+      const newStates = new Map(state.projectStates);
       const newTabs = ps.tabs.filter((t) => t.id !== tabId);
       const newActive =
         ps.activeTabId === tabId ? (newTabs[newTabs.length - 1]?.id ?? '') : ps.activeTabId;
       newStates.set(projectId, { ...ps, tabs: newTabs, activeTabId: newActive });
-      return { projectStates: newStates };
+      return { projectStates: newStates, markersByPty: newMarkers };
     }),
 
   setActiveTab: (projectId, tabId) =>
@@ -561,6 +599,51 @@ export const useAppStore = create<AppStore>((set) => ({
 
       return { projectStates: newStates };
     }),
+
+  addMarker: (payload, xtermMarkerId) => {
+    const id = crypto.randomUUID();
+    set((state) => {
+      const next = new Map(state.markersByPty);
+      const existing = next.get(payload.ptyId) ?? [];
+      const updated = existing.map((m, idx) =>
+        idx === existing.length - 1 ? { ...m, inProgress: false } : m
+      );
+      const marker: AiMarker = {
+        id,
+        seq: updated.length + 1,
+        ptyId: payload.ptyId,
+        line: payload.line,
+        ts: payload.ts,
+        xtermMarkerId,
+        inProgress: true,
+      };
+      next.set(payload.ptyId, [...updated, marker]);
+      return { markersByPty: next };
+    });
+    return id;
+  },
+
+  clearMarkersForPty: (ptyId) =>
+    set((state) => {
+      if (!state.markersByPty.has(ptyId)) return state;
+      const next = new Map(state.markersByPty);
+      next.delete(ptyId);
+      return { markersByPty: next };
+    }),
+
+  pruneDisposed: (ptyId, isDisposed) =>
+    set((state) => {
+      const list = state.markersByPty.get(ptyId);
+      if (!list || list.length === 0) return state;
+      const filtered = list.filter((m) => !isDisposed(m.xtermMarkerId));
+      if (filtered.length === list.length) return state;
+      const next = new Map(state.markersByPty);
+      if (filtered.length === 0) next.delete(ptyId);
+      else next.set(ptyId, filtered);
+      return { markersByPty: next };
+    }),
+
+  getMarkersForPty: (ptyId) => get().markersByPty.get(ptyId) ?? [],
 
   pushNotification: (n) => {
     const id = genId();

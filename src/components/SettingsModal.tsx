@@ -642,6 +642,13 @@ const SHORTCUT_GROUPS: { title: string; items: { keys: string; desc: string }[] 
       { keys: 'Ctrl + Shift + V', desc: '粘贴到终端' },
     ],
   },
+  {
+    title: 'AI 任务标记',
+    items: [
+      { keys: 'Ctrl + Shift + ↑', desc: '跳转到上一个 AI 任务提交' },
+      { keys: 'Ctrl + Shift + ↓', desc: '跳转到下一个 AI 任务提交' },
+    ],
+  },
 ];
 
 function ShortcutsSettings() {
