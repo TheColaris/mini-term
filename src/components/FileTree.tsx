@@ -130,6 +130,7 @@ function TreeNode({ entry, projectRoot, depth, gitStatusMap, onViewDiff, onViewF
                 loadChildren();
               } catch (err) {
                 console.error('重命名失败:', err);
+                await message(`重命名失败：${String(err)}`, { title: '重命名失败', kind: 'error' });
               }
             },
           });
@@ -313,7 +314,17 @@ export function FileTree() {
   }, [project?.path, loadRootEntries]);
 
   useTauriEvent<FsChangePayload>('fs-change', useCallback((payload: FsChangePayload) => {
-    if (project && payload.path === project.path) {
+    if (!project) return;
+    // notify 在 NonRecursive watcher 上 emit 的 payload.path 是发生变化的文件,
+    // 而不是被 watch 的目录本身。原条件 `payload.path === project.path` 永远不匹配,
+    // 导致根目录下重命名/新建/删除后文件列表不刷新。
+    // 改为「变化发生在项目根目录的直接子级」时刷新根列表;子目录变化由各 TreeNode 自己处理。
+    const normalize = (p: string) => p.replace(/[\\/]+/g, '/').replace(/\/+$/, '');
+    const changed = normalize(payload.path);
+    const root = normalize(project.path);
+    if (!changed.startsWith(root + '/')) return;
+    const rest = changed.slice(root.length + 1);
+    if (!rest.includes('/')) {
       loadRootEntries();
     }
   }, [project?.path, loadRootEntries]));

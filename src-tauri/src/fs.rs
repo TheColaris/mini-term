@@ -364,6 +364,35 @@ mod tests {
     }
 
     #[test]
+    fn rename_entry_inside_project_succeeds() {
+        let (root, old_file) = make_test_project();
+        let result = rename_entry(
+            root.to_string_lossy().to_string(),
+            old_file.to_string_lossy().to_string(),
+            "renamed.txt".to_string(),
+        );
+        assert!(result.is_ok(), "rename 失败: {:?}", result);
+        let new_path = root.join("renamed.txt");
+        assert!(new_path.exists(), "新文件应存在: {}", new_path.display());
+        assert!(!old_file.exists(), "旧文件应被移除");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn rename_entry_dotdot_in_new_name_rejected() {
+        let (root, old_file) = make_test_project();
+        let result = rename_entry(
+            root.to_string_lossy().to_string(),
+            old_file.to_string_lossy().to_string(),
+            "../escape.txt".to_string(),
+        );
+        assert!(result.is_err(), "应拒绝 ../ 逃逸");
+        // 旧文件应未被改动
+        assert!(old_file.exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn verify_create_file_in_project() {
         let (root, _) = make_test_project();
         let new_file = root.join("brand-new.txt");
