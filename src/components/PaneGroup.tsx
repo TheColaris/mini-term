@@ -175,7 +175,7 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
   if (!activePane) return null;
 
   return (
-    <div className="w-full h-full flex flex-col">
+    <div className="w-full h-full flex flex-col" data-pty-id={activePane.ptyId}>
       {/* Tab bar */}
       <div
         className="flex bg-[var(--bg-elevated)] border-b border-[var(--border-subtle)] text-[11px] overflow-x-auto select-none shrink-0"
