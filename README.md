@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.19-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-0.2.20-blue" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="platform">
   <img src="https://img.shields.io/badge/macOS%20%7C%20Linux-experimental-lightgrey" alt="platform-experimental">
   <img src="https://img.shields.io/badge/Tauri-v2-orange" alt="tauri">
@@ -60,6 +60,7 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
   - 三个开关独立可配
 - **会话进出检测** — 命令 echo 识别进入 AI；双击 `Ctrl+C` / `Ctrl+D` 或 `exit` / `quit` / `:quit` / `/logout` 识别退出
 - **会话历史** — 读取本地 Claude / Codex 历史会话记录，右键复制恢复命令快速续接
+- **AI 任务标记** — AI 会话内每次用户按 Enter 自动在 xterm 打点，标签右上角 ⚑ 按钮下拉展示历史提交列表，点击或 `Ctrl+Shift+↑/↓` 在标记间跳转，目标行短暂高亮提示
 
 ### 项目管理
 
