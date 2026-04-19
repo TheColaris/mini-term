@@ -222,7 +222,8 @@ export function disposeTerminal(ptyId: number): void {
 export function registerAiMarker(ptyId: number): IMarker | null {
   const cached = getCachedTerminal(ptyId);
   if (!cached) return null;
-  const marker = cached.term.registerMarker(0);
+  // -1:Enter 回显后光标已换行到下一行,取上一行即用户输入行本身
+  const marker = cached.term.registerMarker(-1);
   if (!marker) return null;
   let inner = markerInstancesByPty.get(ptyId);
   if (!inner) {

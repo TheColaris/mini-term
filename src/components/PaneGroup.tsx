@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore, genId } from '../store';
 import { TerminalInstance } from './TerminalInstance';
@@ -141,17 +142,27 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
   }, [node.panes, onClosePane]);
 
   const [markerOpen, setMarkerOpen] = useState(false);
+  const [markerAnchor, setMarkerAnchor] = useState<{ top: number; right: number } | null>(null);
   const markers = useAppStore(
     (s) => (activePane && s.markersByPty.get(activePane.ptyId)) || EMPTY_MARKERS,
   );
-  const popoverRef = useRef<HTMLDivElement>(null);
+  const markerBtnRef = useRef<HTMLButtonElement>(null);
+  const markerPopoverRef = useRef<HTMLDivElement>(null);
+
+  const openMarkerPopover = useCallback(() => {
+    const rect = markerBtnRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setMarkerAnchor({ top: rect.bottom + 4, right: window.innerWidth - rect.right });
+    setMarkerOpen(true);
+  }, []);
 
   useEffect(() => {
     if (!markerOpen) return;
     const onDoc = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setMarkerOpen(false);
-      }
+      const target = e.target as Node;
+      if (markerPopoverRef.current?.contains(target)) return;
+      if (markerBtnRef.current?.contains(target)) return;
+      setMarkerOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -221,32 +232,16 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
           className="ml-auto flex items-center gap-0.5 px-2 text-[12px]"
         >
           {markers.length > 0 && (
-            <div className="relative mr-1" ref={popoverRef}>
-              <button
-                type="button"
-                className="px-1.5 py-0.5 text-[11px] rounded text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--border-subtle)] flex items-center gap-1 transition-colors"
-                onClick={() => setMarkerOpen((v) => !v)}
-                title="AI 任务标记"
-              >
-                <span>⚑</span>
-                <span className="tabular-nums">{markers.length}</span>
-              </button>
-              {markerOpen && (
-                <div
-                  className="absolute right-0 top-full mt-1 z-20 rounded-md border shadow-lg"
-                  style={{
-                    background: 'var(--bg-elevated)',
-                    borderColor: 'var(--border-subtle)',
-                  }}
-                >
-                  <MarkerList
-                    ptyId={activePane.ptyId}
-                    markers={markers}
-                    onClose={() => setMarkerOpen(false)}
-                  />
-                </div>
-              )}
-            </div>
+            <button
+              ref={markerBtnRef}
+              type="button"
+              className="mr-1 px-1.5 py-0.5 text-[11px] rounded text-[var(--text-muted)] hover:text-[var(--accent)] hover:bg-[var(--border-subtle)] flex items-center gap-1 transition-colors"
+              onClick={() => (markerOpen ? setMarkerOpen(false) : openMarkerPopover())}
+              title="AI 任务标记 (Ctrl+Shift+↑/↓ 跳转)"
+            >
+              <span>⚑</span>
+              <span className="tabular-nums">{markers.length}</span>
+            </button>
           )}
           <div
             className="flex items-center gap-0.5 transition-opacity duration-150"
@@ -291,6 +286,26 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
           </div>
         ))}
       </div>
+
+      {markerOpen && markerAnchor && createPortal(
+        <div
+          ref={markerPopoverRef}
+          className="fixed z-50 rounded-md border shadow-lg"
+          style={{
+            top: markerAnchor.top,
+            right: markerAnchor.right,
+            background: 'var(--bg-elevated)',
+            borderColor: 'var(--border-subtle)',
+          }}
+        >
+          <MarkerList
+            ptyId={activePane.ptyId}
+            markers={markers}
+            onClose={() => setMarkerOpen(false)}
+          />
+        </div>,
+        document.body,
+      )}
     </div>
   );
 }
