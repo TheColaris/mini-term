@@ -279,6 +279,23 @@ pub fn rename_entry(
     Ok(new_canon.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+pub fn delete_entry(project_root: String, path: String) -> Result<(), String> {
+    let target = verify_under_project_root(&project_root, &path, true)?;
+    // 多一道保险:绝不允许删除项目根目录本身
+    let root = Path::new(&project_root)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if target == root {
+        return Err("不能删除项目根目录".to_string());
+    }
+    if target.is_dir() {
+        fs::remove_dir_all(&target).map_err(|e| e.to_string())
+    } else {
+        fs::remove_file(&target).map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,6 +406,72 @@ mod tests {
         assert!(result.is_err(), "应拒绝 ../ 逃逸");
         // 旧文件应未被改动
         assert!(old_file.exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn delete_entry_file_inside_project_succeeds() {
+        let (root, file) = make_test_project();
+        let result = delete_entry(
+            root.to_string_lossy().to_string(),
+            file.to_string_lossy().to_string(),
+        );
+        assert!(result.is_ok(), "delete 失败: {:?}", result);
+        assert!(!file.exists(), "文件应被删除");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn delete_entry_directory_recursively() {
+        let (root, _) = make_test_project();
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("nested.txt"), "x").unwrap();
+        let result = delete_entry(
+            root.to_string_lossy().to_string(),
+            sub.to_string_lossy().to_string(),
+        );
+        assert!(result.is_ok(), "目录删除失败: {:?}", result);
+        assert!(!sub.exists(), "子目录应被递归删除");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn delete_entry_rejects_path_outside_project() {
+        let (root, _) = make_test_project();
+        let other = std::env::temp_dir().join(format!(
+            "mini-term-fs-other-del-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&other).unwrap();
+        let other_file = other.join("evil.txt");
+        fs::write(&other_file, "x").unwrap();
+
+        let err = delete_entry(
+            root.to_string_lossy().to_string(),
+            other_file.to_string_lossy().to_string(),
+        )
+        .unwrap_err();
+        assert!(err.contains("不在项目根目录内"));
+        assert!(other_file.exists(), "项目外的文件不应被删除");
+
+        fs::remove_dir_all(&root).ok();
+        fs::remove_dir_all(&other).ok();
+    }
+
+    #[test]
+    fn delete_entry_rejects_project_root_itself() {
+        let (root, _) = make_test_project();
+        let err = delete_entry(
+            root.to_string_lossy().to_string(),
+            root.to_string_lossy().to_string(),
+        )
+        .unwrap_err();
+        assert!(err.contains("不能删除项目根目录"));
+        assert!(root.exists(), "项目根目录不应被删除");
         fs::remove_dir_all(&root).ok();
     }
 

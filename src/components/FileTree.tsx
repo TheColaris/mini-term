@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { message } from '@tauri-apps/plugin-dialog';
+import { ask, message } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { useAppStore, isExpanded, toggleExpandedDir } from '../store';
@@ -131,6 +131,23 @@ function TreeNode({ entry, projectRoot, depth, gitStatusMap, onViewDiff, onViewF
               } catch (err) {
                 console.error('重命名失败:', err);
                 await message(`重命名失败：${String(err)}`, { title: '重命名失败', kind: 'error' });
+              }
+            },
+          });
+          items.push({
+            label: '删除',
+            onClick: async () => {
+              const kind = entry.isDir ? '文件夹' : '文件';
+              const confirmed = await ask(
+                `确定要删除${kind} "${entry.name}" 吗？${entry.isDir ? '\n该操作会递归删除文件夹下的所有内容,无法撤销。' : '\n该操作无法撤销。'}`,
+                { title: `删除${kind}`, kind: 'warning', okLabel: '删除', cancelLabel: '取消' },
+              );
+              if (!confirmed) return;
+              try {
+                await invoke('delete_entry', { projectRoot, path: entry.path });
+              } catch (err) {
+                console.error('删除失败:', err);
+                await message(`删除失败：${String(err)}`, { title: '删除失败', kind: 'error' });
               }
             },
           });
