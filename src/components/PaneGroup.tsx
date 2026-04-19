@@ -7,7 +7,9 @@ import { MarkerList } from './MarkerList';
 import { showContextMenu } from '../utils/contextMenu';
 import { showConfirm, showPrompt } from '../utils/prompt';
 import { disposeTerminal } from '../utils/terminalCache';
-import type { SplitNode, PaneState, ShellConfig } from '../types';
+import type { SplitNode, PaneState, ShellConfig, AiMarker } from '../types';
+
+const EMPTY_MARKERS: AiMarker[] = [];
 
 interface Props {
   node: SplitNode & { type: 'leaf' };
@@ -140,7 +142,7 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
 
   const [markerOpen, setMarkerOpen] = useState(false);
   const markers = useAppStore(
-    (s) => (activePane ? s.markersByPty.get(activePane.ptyId) : undefined) ?? [],
+    (s) => (activePane && s.markersByPty.get(activePane.ptyId)) || EMPTY_MARKERS,
   );
   const popoverRef = useRef<HTMLDivElement>(null);
 
