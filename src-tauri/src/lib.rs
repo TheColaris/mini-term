@@ -28,6 +28,10 @@ pub fn run() {
         .manage(pty::PtyManager::new())
         .manage(fs::FsWatcherManager::new())
         .setup(|app| {
+            // identifier 从 com.tauri-app.tauri-app 切换为 com.mini-term.app 后,
+            // 第一次启动时把旧 app_data_dir 下的 config.json 拷到新目录,
+            // 必须发生在任何 read_config 之前。
+            config::migrate_legacy_app_data(app.handle());
             clipboard::cleanup_old_clipboard_images();
             let pty_manager = app.state::<crate::pty::PtyManager>();
             let pty_clone = pty_manager.inner().clone();

@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
+
+/// 历史 identifier。0.2.20 及之前版本使用模板默认值,从 0.2.21 开始切换到
+/// `com.mini-term.app`。首次启动时一次性把旧目录下的 config.json 拷到新目录,
+/// 旧文件保留不删,作为回退兜底。
+const LEGACY_IDENTIFIER: &str = "com.tauri-app.tauri-app";
 
 // 注意：variant 顺序不可调换！untagged 按声明顺序尝试匹配
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -281,6 +286,51 @@ fn config_path(app: &AppHandle) -> PathBuf {
     dir.join("config.json")
 }
 
+/// 纯函数版本,接收新 app_data_dir 路径。便于单元测试。
+///
+/// 行为:
+/// 1. 新目录已有 `config.json` → 直接返回(已迁移过 / 全新用户首次保存生成)
+/// 2. 新目录无 `config.json`,但老 identifier 目录有 → 拷过来
+/// 3. 老目录也没有 → 返回(全新安装)
+///
+/// 老 config.json 不删除,作为回退兜底。create_dir_all / copy 失败仅打印日志,
+/// 不 panic — 后续 read_config 会在缺文件时退化为 default。
+fn migrate_app_data_at(new_dir: &Path) {
+    let new_config = new_dir.join("config.json");
+    if new_config.exists() {
+        return;
+    }
+    let Some(base_dir) = new_dir.parent() else {
+        return;
+    };
+    let old_config = base_dir.join(LEGACY_IDENTIFIER).join("config.json");
+    if !old_config.exists() {
+        return;
+    }
+    if let Err(e) = fs::create_dir_all(new_dir) {
+        eprintln!("[migrate] 创建新数据目录失败 {}: {e}", new_dir.display());
+        return;
+    }
+    match fs::copy(&old_config, &new_config) {
+        Ok(_) => {
+            eprintln!(
+                "[migrate] 已将旧 config.json 迁移至新目录: {}",
+                new_config.display()
+            );
+        }
+        Err(e) => {
+            eprintln!("[migrate] 拷贝旧 config.json 失败: {e}");
+        }
+    }
+}
+
+/// 在 lib.rs setup 早期调用,保证所有 read_config 之前完成 identifier 迁移。
+pub fn migrate_legacy_app_data(app: &AppHandle) {
+    if let Ok(new_dir) = app.path().app_data_dir() {
+        migrate_app_data_at(&new_dir);
+    }
+}
+
 /// 将旧格式 `pane`（单个）迁移到新格式 `panes`（数组）
 fn normalize_split_node(node: &mut SavedSplitNode) {
     match node {
@@ -465,6 +515,68 @@ mod tests {
         assert!(config.project_ordering.is_none());
         let tree = config.project_tree.unwrap();
         assert_eq!(tree.len(), 2);
+    }
+
+    fn unique_test_root(label: &str) -> PathBuf {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("mini-term-test-{label}-{ts}"));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn migrate_copies_legacy_config_when_new_dir_empty() {
+        let root = unique_test_root("migrate-copy");
+        let new_dir = root.join("com.mini-term.app");
+        let old_dir = root.join(LEGACY_IDENTIFIER);
+        fs::create_dir_all(&old_dir).unwrap();
+        let payload = r#"{"projects":[],"defaultShell":"cmd","availableShells":[]}"#;
+        fs::write(old_dir.join("config.json"), payload).unwrap();
+
+        migrate_app_data_at(&new_dir);
+
+        let migrated = fs::read_to_string(new_dir.join("config.json")).unwrap();
+        assert_eq!(migrated, payload);
+        // 旧文件保留作为兜底
+        assert!(old_dir.join("config.json").exists());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn migrate_skips_when_new_config_already_exists() {
+        let root = unique_test_root("migrate-skip-exists");
+        let new_dir = root.join("com.mini-term.app");
+        fs::create_dir_all(&new_dir).unwrap();
+        fs::write(new_dir.join("config.json"), "current").unwrap();
+
+        let old_dir = root.join(LEGACY_IDENTIFIER);
+        fs::create_dir_all(&old_dir).unwrap();
+        fs::write(old_dir.join("config.json"), "legacy").unwrap();
+
+        migrate_app_data_at(&new_dir);
+
+        let after = fs::read_to_string(new_dir.join("config.json")).unwrap();
+        assert_eq!(after, "current");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn migrate_noop_when_legacy_missing() {
+        let root = unique_test_root("migrate-noop");
+        let new_dir = root.join("com.mini-term.app");
+
+        migrate_app_data_at(&new_dir);
+
+        // 没有任何东西被创建
+        assert!(!new_dir.join("config.json").exists());
+
+        fs::remove_dir_all(&root).ok();
     }
 
     #[test]
