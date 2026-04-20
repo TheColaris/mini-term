@@ -265,27 +265,33 @@ export function FileTree() {
   const config = useAppStore((s) => s.config);
   const project = config.projects.find((p) => p.id === activeProjectId);
 
-  const handleOpenInVscode = useCallback(async () => {
+  const handleOpenInEditor = useCallback(async (editorName?: string) => {
     if (!project) return;
-    // 前端做一次快速预检查(避免无意义的 invoke),后端会权威地再读一次 config
-    if (!(config.vscodePath ?? '').trim()) {
+    if (!config.editors.length) {
       await message(
-        '请先在『设置 → 系统设置 → 外部编辑器』中配置 VS Code 可执行文件路径。',
-        { title: '未配置 VS Code 路径', kind: 'warning' },
+        '请先在『设置 → 系统设置 → 外部编辑器』中添加编辑器。',
+        { title: '未配置外部编辑器', kind: 'warning' },
       );
       return;
     }
     try {
-      await invoke('open_in_vscode', { path: project.path });
+      await invoke('open_in_editor', {
+        path: project.path,
+        editorName: editorName ?? null,
+      });
     } catch (err) {
       const detail = typeof err === 'string' ? err : String(err);
-      console.error('打开 VS Code 失败:', err);
-      await message(detail, {
-        title: '打开 VS Code 失败',
-        kind: 'error',
-      });
+      console.error('打开编辑器失败:', err);
+      await message(detail, { title: '打开编辑器失败', kind: 'error' });
     }
-  }, [project, config.vscodePath]);
+  }, [project, config.editors]);
+
+  const handleSwitchAndOpen = useCallback((editorName: string) => {
+    const newConfig = { ...config, defaultEditor: editorName };
+    useAppStore.getState().setConfig(newConfig);
+    invoke('save_config', { config: newConfig });
+    handleOpenInEditor(editorName);
+  }, [config, handleOpenInEditor]);
 
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
   const [gitStatusMap, setGitStatusMap] = useState<Map<string, GitFileStatus>>(new Map());
@@ -408,28 +414,37 @@ export function FileTree() {
         <span className="text-sm text-[var(--text-muted)] uppercase tracking-[0.12em] font-medium truncate">
           Files — {project.name}
         </span>
-        <button
-          type="button"
-          onClick={handleOpenInVscode}
-          title="使用 VS Code 打开该文件夹"
-          className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0 leading-none"
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M10 2h4v4" />
-            <path d="M14 2L7 9" />
-            <path d="M12 9v4a1 1 0 01-1 1H3a1 1 0 01-1-1V5a1 1 0 011-1h4" />
-          </svg>
-        </button>
+        {config.editors.length > 0 && (
+          <div className="flex items-center flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => handleOpenInEditor()}
+              title={`使用${config.editors.find((e) => e.name === config.defaultEditor)?.name ?? config.editors[0]?.name ?? '编辑器'}打开`}
+              className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors text-xs leading-none px-1.5 py-0.5 rounded-l-[var(--radius-sm)] hover:bg-[var(--border-subtle)]"
+            >
+              {config.editors.find((e) => e.name === config.defaultEditor)?.name ?? config.editors[0]?.name}
+            </button>
+            {config.editors.length > 1 && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  showContextMenu(rect.left, rect.bottom + 4, config.editors.map((editor) => ({
+                    label: editor.name + (editor.name === (config.defaultEditor ?? config.editors[0]?.name) ? ' (*)' : ''),
+                    onClick: () => handleSwitchAndOpen(editor.name),
+                  })));
+                }}
+                title="选择其他编辑器"
+                className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors text-xs leading-none pl-0.5 pr-1 py-0.5 rounded-r-[var(--radius-sm)] hover:bg-[var(--border-subtle)] border-l border-[var(--border-subtle)]"
+              >
+                <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">
+                  <path d="M1.5 3L4 5.5L6.5 3" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
       </div>
       <div className="flex-1 px-1" onContextMenu={handleRootContextMenu}>
         {rootEntries.map((entry) => (

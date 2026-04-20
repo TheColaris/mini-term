@@ -62,7 +62,12 @@ pub struct AppConfig {
     pub ai_completion_popup: bool,
     #[serde(default = "default_ai_completion_taskbar_flash")]
     pub ai_completion_taskbar_flash: bool,
+    #[serde(default)]
+    pub editors: Vec<EditorConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_editor: Option<String>,
+    /// 旧字段，仅用于反序列化迁移，序列化时跳过
+    #[serde(default, skip_serializing)]
     pub vscode_path: Option<String>,
     #[serde(default = "default_git_changes_view_mode")]
     pub git_changes_view_mode: String,
@@ -137,6 +142,13 @@ pub struct ShellConfig {
     pub args: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorConfig {
+    pub name: String,
+    pub command: String,
+}
+
 fn default_ui_font_size() -> f64 {
     13.0
 }
@@ -179,6 +191,8 @@ impl Default for AppConfig {
             terminal_follow_theme: default_terminal_follow_theme(),
             ai_completion_popup: default_ai_completion_popup(),
             ai_completion_taskbar_flash: default_ai_completion_taskbar_flash(),
+            editors: vec![],
+            default_editor: None,
             vscode_path: None,
             git_changes_view_mode: default_git_changes_view_mode(),
             projects_visible: true,
@@ -350,6 +364,21 @@ fn normalize_split_node(node: &mut SavedSplitNode) {
 }
 
 fn migrate_config(mut config: AppConfig) -> AppConfig {
+    // 迁移 vscodePath → editors
+    if config.editors.is_empty() {
+        if let Some(ref path) = config.vscode_path {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                config.editors.push(EditorConfig {
+                    name: "VS Code".into(),
+                    command: trimmed.into(),
+                });
+                config.default_editor = Some("VS Code".into());
+            }
+        }
+    }
+    config.vscode_path = None;
+
     // 迁移 SavedSplitNode: pane → panes
     for project in config.projects.iter_mut() {
         if let Some(layout) = project.saved_layout.as_mut() {

@@ -25,7 +25,8 @@ export interface AppConfig {
   terminalFollowTheme: boolean;
   aiCompletionPopup: boolean;
   aiCompletionTaskbarFlash: boolean;
-  vscodePath?: string;
+  editors: EditorConfig[];
+  defaultEditor?: string;
   gitChangesViewMode: 'list' | 'tree';
   projectsVisible: boolean;
   sessionsVisible: boolean;
@@ -46,6 +47,11 @@ export interface ShellConfig {
   name: string;
   command: string;
   args?: string[];
+}
+
+export interface EditorConfig {
+  name: string;
+  command: string;
 }
 
 // === 布局持久化 ===

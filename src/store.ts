@@ -360,6 +360,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     terminalFollowTheme: true,
     aiCompletionPopup: true,
     aiCompletionTaskbarFlash: true,
+    editors: [],
     gitChangesViewMode: 'list',
     projectsVisible: true,
     sessionsVisible: true,

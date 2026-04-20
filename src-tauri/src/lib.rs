@@ -88,7 +88,7 @@ pub fn run() {
             git::git_unstage_all,
             git::git_commit,
             git::git_discard_file,
-            editor::open_in_vscode,
+            editor::open_in_editor,
             editor::open_path_with_default_app,
             clipboard::read_clipboard_image,
             clipboard::save_clipboard_text,
