@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { ask } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '../store';
 import { useTauriEvent } from '../hooks/useTauriEvent';
 import { showContextMenu } from '../utils/contextMenu';
@@ -191,7 +192,11 @@ export function GitChanges({ projectPath: _projectPath, repoPath, onCommitSucces
   }, [repoPath, commitMsg, staged.length, loadChanges, onCommitSuccess]);
 
   const handleDiscard = useCallback(async (files: string[]) => {
-    if (!confirm(`确定要丢弃 ${files.length} 个文件的修改？此操作不可撤销。`)) return;
+    const confirmed = await ask(
+      `确定要丢弃 ${files.length} 个文件的修改吗？\n此操作不可撤销。`,
+      { title: '丢弃修改', kind: 'warning', okLabel: '丢弃', cancelLabel: '取消' },
+    );
+    if (!confirmed) return;
     try {
       await invoke('git_discard_file', { repoPath, files });
       loadChanges();
