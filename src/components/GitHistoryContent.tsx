@@ -138,6 +138,15 @@ export function GitHistoryContent({ projectPath, repos, refreshRepos }: GitHisto
   // branch name → commit hash 映射（每个 repo 独立）
   const [repoBranches, setRepoBranches] = useState<Map<string, BranchInfo[]>>(new Map());
 
+  // 每个 repo 当前"查看"的分支(用于只改 git log 显示,不 checkout)。未设则用 HEAD。
+  const [viewBranches, setViewBranches] = useState<Map<string, string>>(new Map());
+  const viewBranchesRef = useRef(viewBranches);
+  viewBranchesRef.current = viewBranches;
+
+  // 当前打开的分支下拉所属的 repoPath(同一时刻最多一个)
+  const [branchDropdownOpen, setBranchDropdownOpen] = useState<string | null>(null);
+  const branchDropdownRef = useRef<HTMLDivElement | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // pull/push 操作状态
@@ -162,9 +171,15 @@ export function GitHistoryContent({ projectPath, repos, refreshRepos }: GitHisto
   }, []);
 
   const loadCommits = useCallback(
-    async (repoPath: string, beforeCommit?: string) => {
+    async (repoPath: string, beforeCommit?: string, branchOverride?: string) => {
       const existing = repoStatesRef.current.get(repoPath);
       if (existing?.loading) return;
+
+      // 分页时(beforeCommit 有值)继续当前链路,不需要 branch 参数;
+      // 否则优先使用 override,再回退到 viewBranchesRef 里记住的值
+      const branch = beforeCommit
+        ? undefined
+        : branchOverride ?? viewBranchesRef.current.get(repoPath);
 
       setRepoStates((prev) => {
         const next = new Map(prev);
@@ -178,6 +193,7 @@ export function GitHistoryContent({ projectPath, repos, refreshRepos }: GitHisto
           repoPath,
           beforeCommit: beforeCommit ?? null,
           limit: 30,
+          branch: branch ?? null,
         });
         setRepoStates((prev) => {
           const next = new Map(prev);
@@ -255,6 +271,38 @@ export function GitHistoryContent({ projectPath, repos, refreshRepos }: GitHisto
       console.error('get_commit_files failed:', e);
     }
   }, []);
+
+  const handleSwitchView = useCallback(
+    (repoPath: string, branchName: string) => {
+      setBranchDropdownOpen(null);
+      setViewBranches((prev) => {
+        const next = new Map(prev);
+        next.set(repoPath, branchName);
+        return next;
+      });
+      // 清空该 repo 的 commits,随后用 branchOverride 传入新分支重新加载
+      // (setState 异步,不能依赖 viewBranchesRef 立即拿到新值)
+      setRepoStates((prev) => {
+        const next = new Map(prev);
+        next.set(repoPath, { commits: [], loading: false, hasMore: true });
+        return next;
+      });
+      loadCommits(repoPath, undefined, branchName);
+    },
+    [loadCommits],
+  );
+
+  // 点击下拉外部关闭
+  useEffect(() => {
+    if (!branchDropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (branchDropdownRef.current && !branchDropdownRef.current.contains(e.target as Node)) {
+        setBranchDropdownOpen(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [branchDropdownOpen]);
 
   const handleCommitContextMenu = useCallback(
     (e: React.MouseEvent, repoPath: string, commit: GitCommitInfo) => {
@@ -379,11 +427,83 @@ export function GitHistoryContent({ projectPath, repos, refreshRepos }: GitHisto
                   &#9662;
                 </span>
                 <span className="truncate font-medium">{node.name}</span>
-                {repo.currentBranch && (
-                  <span className="shrink-0 text-[11px] leading-[18px] px-1.5 rounded font-mono text-[var(--text-muted)] bg-[var(--border-subtle)]">
-                    {repo.currentBranch}
-                  </span>
-                )}
+                {repo.currentBranch && (() => {
+                  const viewing = viewBranches.get(repo.path);
+                  const displayBranch = viewing ?? repo.currentBranch;
+                  const isViewingOther = viewing !== undefined && viewing !== repo.currentBranch;
+                  const dropdownOpen = branchDropdownOpen === repo.path;
+                  const allBranches = repoBranches.get(repo.path) ?? [];
+                  return (
+                    <div
+                      className="relative shrink-0"
+                      ref={dropdownOpen ? branchDropdownRef : null}
+                    >
+                      <span
+                        className={`inline-flex items-center gap-0.5 text-[11px] leading-[18px] px-1.5 rounded font-mono cursor-pointer transition-colors ${
+                          isViewingOther
+                            ? 'text-[var(--color-accent,#58a6ff)] bg-[rgba(88,166,255,0.15)] hover:bg-[rgba(88,166,255,0.25)]'
+                            : 'text-[var(--text-muted)] bg-[var(--border-subtle)] hover:bg-[var(--color-accent,#58a6ff)] hover:text-white'
+                        }`}
+                        title={
+                          isViewingOther
+                            ? `正在查看分支 ${displayBranch} 的历史(当前 HEAD: ${repo.currentBranch}),点击切换`
+                            : '点击切换查看其他分支的 git log(不会 checkout)'
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (dropdownOpen) {
+                            setBranchDropdownOpen(null);
+                          } else {
+                            setBranchDropdownOpen(repo.path);
+                            if (!repoBranches.has(repo.path)) loadBranches(repo.path);
+                          }
+                        }}
+                      >
+                        <span className="truncate max-w-[200px]">{displayBranch}</span>
+                        <span className="text-[9px] opacity-70">▾</span>
+                      </span>
+                      {dropdownOpen && (
+                        <div
+                          className="absolute top-full left-0 mt-0.5 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-[var(--radius-sm)] shadow-[var(--shadow-overlay)] overflow-hidden min-w-[180px] max-h-[320px] overflow-y-auto"
+                          style={{ zIndex: 100 }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {allBranches.length === 0 ? (
+                            <div className="px-3 py-1.5 text-xs text-[var(--text-muted)]">加载中...</div>
+                          ) : (
+                            allBranches.map((b) => {
+                              const active = displayBranch === b.name;
+                              return (
+                                <div
+                                  key={b.name}
+                                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs cursor-pointer transition-colors duration-100 ${
+                                    active
+                                      ? 'bg-[var(--accent-subtle,rgba(88,166,255,0.15))] text-[var(--color-accent,#58a6ff)]'
+                                      : 'text-[var(--text-primary)] hover:bg-[var(--border-subtle)]'
+                                  }`}
+                                  onClick={() => handleSwitchView(repo.path, b.name)}
+                                >
+                                  <span
+                                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                                    style={{
+                                      backgroundColor: b.isRemote
+                                        ? 'var(--text-muted)'
+                                        : 'rgb(63, 185, 80)',
+                                    }}
+                                  />
+                                  <span className="truncate font-mono flex-1">{b.name}</span>
+                                  {b.name === repo.currentBranch && (
+                                    <span className="shrink-0 text-[9px] px-1 rounded bg-[var(--color-accent,#58a6ff)] text-white font-medium">HEAD</span>
+                                  )}
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
                 <button

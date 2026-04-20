@@ -243,7 +243,39 @@ pub struct BranchInfo {
     pub commit_hash: String,
 }
 
+/// 给定一个主仓库,收集它的所有 git worktree 作为独立仓库条目。
+/// 失效(路径不存在 / 无法 open)的 worktree 会被静默跳过。
+fn collect_worktrees_of(repo: &Repository) -> Vec<(String, PathBuf, Repository)> {
+    let mut out = Vec::new();
+    let names = match repo.worktrees() {
+        Ok(n) => n,
+        Err(_) => return out,
+    };
+    for wt_name in names.iter().flatten() {
+        let wt = match repo.find_worktree(wt_name) {
+            Ok(w) => w,
+            Err(_) => continue,
+        };
+        let wt_path = wt.path().to_path_buf();
+        if !wt_path.exists() {
+            continue; // prune 后的 worktree 路径已失效
+        }
+        let wt_repo = match Repository::open_from_worktree(&wt) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let display_name = wt_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| wt_name.to_string());
+        out.push((display_name, wt_path, wt_repo));
+    }
+    out
+}
+
 /// Scan project_path for git repositories.
+/// 除了项目自身 / 子目录下直接可见的仓库,还会把每个主仓库关联的 git worktree
+/// 作为独立条目加入,这样 History / Changes 面板就能看到并切换 worktree。
 fn find_repos(project_path: &Path) -> Vec<(String, PathBuf, Repository)> {
     let mut repos = Vec::new();
 
@@ -255,7 +287,10 @@ fn find_repos(project_path: &Path) -> Vec<(String, PathBuf, Repository)> {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "root".to_string());
+            // 在移动 repo 之前先把 worktree 条目收集好
+            let wt_entries = collect_worktrees_of(&repo);
             repos.push((name, repo_root, repo));
+            repos.extend(wt_entries);
             return repos;
         }
     }
@@ -288,7 +323,9 @@ fn find_repos(project_path: &Path) -> Vec<(String, PathBuf, Repository)> {
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_default();
+                        let wt_entries = collect_worktrees_of(&repo);
                         repos.push((name, sub, repo));
+                        repos.extend(wt_entries);
                         continue; // 找到仓库后不再深入其内部
                     }
                 }
@@ -405,6 +442,7 @@ pub fn get_git_log(
     repo_path: String,
     before_commit: Option<String>,
     limit: Option<usize>,
+    branch: Option<String>,
 ) -> Result<Vec<GitCommitInfo>, String> {
     let path = Path::new(&repo_path);
     let repo = Repository::open(path).map_err(|e| e.to_string())?;
@@ -419,6 +457,19 @@ pub fn get_git_log(
         for parent_id in commit.parent_ids() {
             revwalk.push(parent_id).map_err(|e| e.to_string())?;
         }
+    } else if let Some(ref b) = branch {
+        // 先找本地 refs/heads/<b>,再找远程 refs/remotes/<b>
+        // worktree 持有的分支也在 refs/heads/ 下(与主 repo 共享 refs 存储),天然支持
+        let local_ref = format!("refs/heads/{}", b);
+        let remote_ref = format!("refs/remotes/{}", b);
+        let reference = repo
+            .find_reference(&local_ref)
+            .or_else(|_| repo.find_reference(&remote_ref))
+            .map_err(|_| format!("未找到分支:{}", b))?;
+        let oid = reference
+            .target()
+            .ok_or_else(|| format!("分支 {} 无有效 target", b))?;
+        revwalk.push(oid).map_err(|e| e.to_string())?;
     } else {
         revwalk.push_head().map_err(|e| e.to_string())?;
     }
