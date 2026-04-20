@@ -65,6 +65,26 @@ fn is_path_ignored(gitignores: &[Gitignore], full_path: &Path, is_dir: bool) -> 
 
 const ALWAYS_IGNORE: &[&str] = &[".git", "node_modules", "target", ".next", "dist", "__pycache__", ".superpowers"];
 
+/// Windows 上 `Path::canonicalize()` 会给普通盘符路径加上 `\\?\` verbatim 前缀
+/// (绕过 MAX_PATH 限制),这种形式回传前端后拖进 shell 不友好。
+/// 只剥掉 `\\?\C:\...` 形式,UNC/Volume GUID 等特殊前缀保留不动。
+#[cfg(windows)]
+fn strip_verbatim_prefix(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        let bytes = rest.as_bytes();
+        if bytes.len() >= 2 && bytes[1] == b':' {
+            return PathBuf::from(rest);
+        }
+    }
+    p
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_prefix(p: PathBuf) -> PathBuf {
+    p
+}
+
 /// 校验 target 必须在 project_root 内,防止前端构造 `../../etc/passwd` 之类的
 /// 路径逃逸出项目根目录。
 ///
@@ -73,7 +93,8 @@ const ALWAYS_IGNORE: &[&str] = &[".git", "node_modules", "target", ".next", "dis
 /// `must_exist=false` 时仅 canonicalize 父目录后拼上 file_name,允许 target
 /// 本身不存在(用于 create_file/create_directory 这类创建场景)。
 ///
-/// 返回校验后的绝对路径,后续 IO 直接用它,避免重复访问磁盘。
+/// 返回校验后的绝对路径(Windows 上已剥 `\\?\` 前缀),后续 IO 直接用它,
+/// 避免重复访问磁盘。
 fn verify_under_project_root(
     project_root: &str,
     target: &str,
@@ -81,12 +102,14 @@ fn verify_under_project_root(
 ) -> Result<PathBuf, String> {
     let root = Path::new(project_root)
         .canonicalize()
+        .map(strip_verbatim_prefix)
         .map_err(|e| format!("项目根目录无效: {}: {}", project_root, e))?;
 
     let target_path = Path::new(target);
     let canon = if must_exist {
         target_path
             .canonicalize()
+            .map(strip_verbatim_prefix)
             .map_err(|e| format!("路径不可访问: {}: {}", target, e))?
     } else {
         let parent = target_path
@@ -94,6 +117,7 @@ fn verify_under_project_root(
             .ok_or_else(|| format!("无法获取父目录: {}", target))?;
         let parent_canon = parent
             .canonicalize()
+            .map(strip_verbatim_prefix)
             .map_err(|e| format!("父目录不可访问: {}: {}", parent.display(), e))?;
         let name = target_path
             .file_name()
@@ -283,8 +307,10 @@ pub fn rename_entry(
 pub fn delete_entry(project_root: String, path: String) -> Result<(), String> {
     let target = verify_under_project_root(&project_root, &path, true)?;
     // 多一道保险:绝不允许删除项目根目录本身
+    // 必须同样剥掉 `\\?\`,否则与 verify_under_project_root 返回的 target 形式不一致
     let root = Path::new(&project_root)
         .canonicalize()
+        .map(strip_verbatim_prefix)
         .map_err(|e| e.to_string())?;
     if target == root {
         return Err("不能删除项目根目录".to_string());
@@ -334,7 +360,7 @@ mod tests {
             true,
         )
         .unwrap();
-        assert!(canon.starts_with(root.canonicalize().unwrap()));
+        assert!(canon.starts_with(strip_verbatim_prefix(root.canonicalize().unwrap())));
         fs::remove_dir_all(&root).ok();
     }
 
@@ -485,7 +511,7 @@ mod tests {
             false,
         )
         .unwrap();
-        assert!(canon.starts_with(root.canonicalize().unwrap()));
+        assert!(canon.starts_with(strip_verbatim_prefix(root.canonicalize().unwrap())));
         assert!(!canon.exists()); // 文件还没创建
         fs::remove_dir_all(&root).ok();
     }

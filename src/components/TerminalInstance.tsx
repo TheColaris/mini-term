@@ -132,7 +132,7 @@ export function TerminalInstance({ ptyId }: Props) {
     const path = getFileDragPath();
     if (path) {
       setFileDrag(false);
-      void writePtyInput(ptyId, `"${path}"`);
+      void writePtyInput(ptyId, `'${path}'`);
       getCachedTerminal(ptyId)?.term.focus();
     }
   }, [ptyId]);
