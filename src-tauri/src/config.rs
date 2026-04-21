@@ -72,6 +72,12 @@ pub struct AppConfig {
     #[serde(default = "default_git_changes_view_mode")]
     pub git_changes_view_mode: String,
     #[serde(default = "default_true")]
+    pub long_paste_to_file: bool,
+    #[serde(default = "default_long_paste_line_threshold")]
+    pub long_paste_line_threshold: u32,
+    #[serde(default = "default_long_paste_char_threshold")]
+    pub long_paste_char_threshold: u32,
+    #[serde(default = "default_true")]
     pub projects_visible: bool,
     #[serde(default = "default_true")]
     pub sessions_visible: bool,
@@ -170,6 +176,12 @@ fn default_ai_completion_taskbar_flash() -> bool {
 fn default_git_changes_view_mode() -> String {
     "list".into()
 }
+fn default_long_paste_line_threshold() -> u32 {
+    10
+}
+fn default_long_paste_char_threshold() -> u32 {
+    2000
+}
 fn default_true() -> bool {
     true
 }
@@ -195,6 +207,9 @@ impl Default for AppConfig {
             default_editor: None,
             vscode_path: None,
             git_changes_view_mode: default_git_changes_view_mode(),
+            long_paste_to_file: true,
+            long_paste_line_threshold: default_long_paste_line_threshold(),
+            long_paste_char_threshold: default_long_paste_char_threshold(),
             projects_visible: true,
             sessions_visible: true,
             files_visible: true,

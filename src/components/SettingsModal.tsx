@@ -247,11 +247,22 @@ function TerminalSettings() {
   const [newCommand, setNewCommand] = useState('');
   const [newArgs, setNewArgs] = useState('');
 
+  const longPasteEnabled = config.longPasteToFile ?? true;
+  const savedLineThreshold = config.longPasteLineThreshold ?? 10;
+  const savedCharThreshold = config.longPasteCharThreshold ?? 2000;
+  const [lineThresholdInput, setLineThresholdInput] = useState(String(savedLineThreshold));
+  const [charThresholdInput, setCharThresholdInput] = useState(String(savedCharThreshold));
+
   useEffect(() => {
     setShells([...config.availableShells]);
     setDefaultShell(config.defaultShell);
     setAdding(false);
   }, [config]);
+
+  useEffect(() => {
+    setLineThresholdInput(String(savedLineThreshold));
+    setCharThresholdInput(String(savedCharThreshold));
+  }, [savedLineThreshold, savedCharThreshold]);
 
   const save = useCallback(async (updatedShells: ShellConfig[], updatedDefault: string) => {
     const newConfig = {
@@ -303,6 +314,34 @@ function TerminalSettings() {
   const handleSetDefault = (name: string) => {
     setDefaultShell(name);
     save(shells, name);
+  };
+
+  const saveConfigPatch = useCallback(async (patch: Partial<typeof config>) => {
+    const newConfig = { ...useAppStore.getState().config, ...patch };
+    setConfig(newConfig);
+    await invoke('save_config', { config: newConfig });
+  }, [setConfig]);
+
+  const handleLongPasteEnabledChange = (enabled: boolean) => {
+    void saveConfigPatch({ longPasteToFile: enabled });
+  };
+
+  const commitLineThreshold = () => {
+    const n = parseInt(lineThresholdInput, 10);
+    const clamped = Number.isFinite(n) && n >= 0 ? Math.min(n, 100000) : savedLineThreshold;
+    setLineThresholdInput(String(clamped));
+    if (clamped !== savedLineThreshold) {
+      void saveConfigPatch({ longPasteLineThreshold: clamped });
+    }
+  };
+
+  const commitCharThreshold = () => {
+    const n = parseInt(charThresholdInput, 10);
+    const clamped = Number.isFinite(n) && n >= 0 ? Math.min(n, 10000000) : savedCharThreshold;
+    setCharThresholdInput(String(clamped));
+    if (clamped !== savedCharThreshold) {
+      void saveConfigPatch({ longPasteCharThreshold: clamped });
+    }
   };
 
   return (
@@ -371,6 +410,75 @@ function TerminalSettings() {
 
       <div className="pt-3 text-sm text-[var(--text-muted)]">
         点击圆点设为默认终端 · 新建终端标签页时可选择类型
+      </div>
+
+      <div className="pt-6 text-base text-[var(--text-muted)] uppercase tracking-[0.1em] mb-2">
+        长文本粘贴
+      </div>
+
+      <div className="flex items-center justify-between px-3 py-2.5 rounded-[var(--radius-md)] bg-[var(--bg-base)] border border-[var(--border-subtle)]">
+        <div className="pr-4">
+          <div className="text-base text-[var(--text-primary)]">粘贴时超长文本转临时文件</div>
+          <div className="text-sm text-[var(--text-muted)]">
+            超过下方阈值时，将剪贴板内容保存到临时 .txt 并粘贴带引号的文件路径，避免 AI 工具被超长粘贴卡住
+          </div>
+        </div>
+        <button
+          className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
+            longPasteEnabled ? 'bg-[var(--accent)]' : 'bg-[var(--border-strong)]'
+          }`}
+          onClick={() => handleLongPasteEnabledChange(!longPasteEnabled)}
+        >
+          <span
+            className={`absolute top-0.5 left-0 w-4 h-4 rounded-full bg-white transition-transform ${
+              longPasteEnabled ? 'translate-x-[18px]' : 'translate-x-0.5'
+            }`}
+          />
+        </button>
+      </div>
+
+      <div
+        className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-[var(--radius-md)] bg-[var(--bg-base)] border border-[var(--border-subtle)] transition-opacity ${
+          longPasteEnabled ? '' : 'opacity-50 pointer-events-none'
+        }`}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="text-base text-[var(--text-primary)]">行数阈值</div>
+          <div className="text-sm text-[var(--text-muted)]">粘贴内容行数 ≥ 此值即转存（0 表示不按行数判断）</div>
+        </div>
+        <input
+          type="number"
+          min={0}
+          className="w-24 bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-default)] rounded-[var(--radius-sm)] px-2 py-1 text-base outline-none focus:border-[var(--accent)] font-mono text-right"
+          value={lineThresholdInput}
+          onChange={(e) => setLineThresholdInput(e.target.value)}
+          onBlur={commitLineThreshold}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+        />
+      </div>
+
+      <div
+        className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-[var(--radius-md)] bg-[var(--bg-base)] border border-[var(--border-subtle)] transition-opacity ${
+          longPasteEnabled ? '' : 'opacity-50 pointer-events-none'
+        }`}
+      >
+        <div className="flex-1 min-w-0">
+          <div className="text-base text-[var(--text-primary)]">字符数阈值</div>
+          <div className="text-sm text-[var(--text-muted)]">粘贴内容长度 ≥ 此值即转存（0 表示不按字符判断）</div>
+        </div>
+        <input
+          type="number"
+          min={0}
+          className="w-24 bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-default)] rounded-[var(--radius-sm)] px-2 py-1 text-base outline-none focus:border-[var(--accent)] font-mono text-right"
+          value={charThresholdInput}
+          onChange={(e) => setCharThresholdInput(e.target.value)}
+          onBlur={commitCharThreshold}
+          onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+        />
+      </div>
+
+      <div className="pt-1 text-sm text-[var(--text-muted)]">
+        关闭后超长文本将直接粘贴 · 任一阈值命中即触发转存 · 临时文件保存在系统 temp 目录，24 小时后自动清理
       </div>
     </div>
   );

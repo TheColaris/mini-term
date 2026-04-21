@@ -28,6 +28,9 @@ export interface AppConfig {
   editors: EditorConfig[];
   defaultEditor?: string;
   gitChangesViewMode: 'list' | 'tree';
+  longPasteToFile: boolean;
+  longPasteLineThreshold: number;
+  longPasteCharThreshold: number;
   projectsVisible: boolean;
   sessionsVisible: boolean;
   filesVisible: boolean;

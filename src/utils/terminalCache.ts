@@ -304,20 +304,19 @@ async function clipboardHasImage(): Promise<boolean> {
   return false;
 }
 
-/** 长文本阈值：满足任一条件即转存为临时文件 */
-const LONG_TEXT_LINE_THRESHOLD = 10;
-const LONG_TEXT_CHAR_THRESHOLD = 2000;
-
 /** 判定剪贴板文本是否需要转存为临时文件（避免直接粘贴超长内容） */
-function isLongText(text: string): boolean {
-  if (text.length >= LONG_TEXT_CHAR_THRESHOLD) return true;
-  const lines = text.replace(/\r\n/g, '\n').split('\n').length;
-  return lines >= LONG_TEXT_LINE_THRESHOLD;
+function isLongText(text: string, lineThreshold: number, charThreshold: number): boolean {
+  if (charThreshold > 0 && text.length >= charThreshold) return true;
+  if (lineThreshold > 0) {
+    const lines = text.replace(/\r\n/g, '\n').split('\n').length;
+    if (lines >= lineThreshold) return true;
+  }
+  return false;
 }
 
 /** 读取系统剪贴板并写入终端 PTY。
  * - 剪贴板含图片 → 保存为 temp PNG，粘贴带引号的路径（兼容含空格路径）
- * - 文本长度 ≥ 2000 字符或 ≥ 10 行 → 保存为 temp .txt，粘贴带引号的路径
+ * - 文本超过配置阈值且开关开启 → 保存为 temp .txt，粘贴带引号的路径
  * - 否则直接粘贴文本
  */
 export async function pasteToTerminal(ptyId: number): Promise<void> {
@@ -336,8 +335,13 @@ export async function pasteToTerminal(ptyId: number): Promise<void> {
   const text = await readText().catch(() => null);
   if (!text) return;
 
+  const cfg = useAppStore.getState().config;
+  const enabled = cfg.longPasteToFile ?? true;
+  const lineThreshold = cfg.longPasteLineThreshold ?? 10;
+  const charThreshold = cfg.longPasteCharThreshold ?? 2000;
+
   // 长文本：转存临时文件，粘贴路径；失败则回退到直接粘贴
-  if (isLongText(text)) {
+  if (enabled && isLongText(text, lineThreshold, charThreshold)) {
     try {
       const path: string = await invoke('save_clipboard_text', { text });
       await enqueuePtyWrite(ptyId, `"${path}"`);
