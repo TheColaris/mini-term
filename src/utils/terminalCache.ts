@@ -280,7 +280,14 @@ export async function copyTerminalSelection(ptyId: number): Promise<boolean> {
   if (!cached) return false;
   const sel = cached.term.getSelection();
   if (!sel) return false;
-  await writeText(sel);
+  // 优先走 Webview 原生 Clipboard API(直接由 WebView 写系统剪贴板,
+  // 不经过 Tauri IPC 的 JSON 序列化),避免长文本经 IPC 被截断。
+  // 不可用时回退到 Tauri 插件 writeText。
+  try {
+    await navigator.clipboard.writeText(sel);
+  } catch {
+    await writeText(sel);
+  }
   return true;
 }
 
