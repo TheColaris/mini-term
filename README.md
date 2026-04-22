@@ -119,6 +119,18 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 > - **Windows** — 主要支持平台，保证可用性，日常开发与测试均在 Windows 上进行
 > - **macOS / Linux** — 代码层面已支持（Tauri bundle targets = `all`），但**可用性欠佳**，未经充分打磨，欢迎提 Issue 反馈
 
+#### macOS 安装提示
+
+下载 `.dmg` 后双击打开,如果系统弹出 **"Mini-Term" is damaged and can't be opened. You should move it to the Bin**(已损坏,移到废纸篓),这并不是文件真的损坏 —— 而是 Release 产物没有 Apple Developer ID 签名,被 Gatekeeper 因 quarantine 标记拒绝。
+
+把 `.app` 拖入 `/Applications` 后,在终端执行一次即可解除限制:
+
+```bash
+xattr -cr /Applications/Mini-Term.app
+```
+
+之后正常双击启动。每次升级新版本都需要再执行一次。
+
 ### 从源码构建
 
 #### 前置条件
