@@ -97,6 +97,10 @@ const markerInstancesByPty = new Map<number, Map<number, IMarker>>();
 const FLASH_DECORATION_CSS_BG = 'rgba(245, 197, 24, 0.33)';
 const FLASH_DURATION_MS = 300;
 
+/** xterm.js 在 sendFocus 模式下对 focus/blur 发出的 CSI 序列 */
+const FOCUS_IN_SEQ = '\x1b[I';
+const FOCUS_OUT_SEQ = '\x1b[O';
+
 export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   const existing = cache.get(ptyId);
   if (existing) return existing;
@@ -152,8 +156,13 @@ export function getOrCreateTerminal(ptyId: number): CachedTerminal {
   });
 
   // 用户输入 → PTY
+  // 注意:xterm.js 在 TUI 开启 sendFocus(DEC 1004) 模式后,会把 focus/blur
+  // 事件也通过 triggerDataEvent 发出 CSI I/CSI O。这不是用户按键,如果也跟着
+  // scrollToBottom,用户往上翻历史时一切焦点(点别处或切回来)就会被打回底部。
   const onDataDisp = term.onData((data) => {
-    term.scrollToBottom();
+    if (data !== FOCUS_IN_SEQ && data !== FOCUS_OUT_SEQ) {
+      term.scrollToBottom();
+    }
     void enqueuePtyWrite(ptyId, data);
   });
 

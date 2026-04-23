@@ -196,6 +196,22 @@ const AI_ENTER_SCAN_WINDOW: Duration = Duration::from_millis(2000);
 /// 误触发 ai-working → ai-idle 的"任务完成"通知。
 const RESIZE_COOLDOWN: Duration = Duration::from_millis(800);
 
+/// 终端焦点切换后的 TUI 重绘冷却窗口
+///
+/// xterm.js 在 TUI 开启 DEC 私有模式 1004 (sendFocus) 后,会在 textarea
+/// 获得/失去焦点时向 PTY 写入 CSI I / CSI O。Claude/Codex 等应用收到这些
+/// 焦点事件后会做局部重绘(光标/状态反馈),产生伪输出。若不加冷却,重绘数据
+/// 会刷新 last_output,被 process_monitor 误判为 AI 活跃,导致仅仅点击/切出
+/// 终端就把 ai-idle 推成 ai-working。
+///
+/// 与 RESIZE_COOLDOWN 对齐为 800ms:AI 进程调度延迟在慢机器/WSL 下并不比 ConPTY
+/// resize 响应更可控,保守对齐更稳妥。
+const FOCUS_COOLDOWN: Duration = Duration::from_millis(800);
+
+/// 终端焦点事件的 CSI 序列(xterm.js 在 sendFocus 模式下写入 PTY)
+const FOCUS_IN_SEQ: &str = "\x1b[I";
+const FOCUS_OUT_SEQ: &str = "\x1b[O";
+
 /// 去除 ANSI 转义序列，返回纯文本
 fn strip_ansi_codes(s: &str) -> String {
     let mut result = String::new();
@@ -263,7 +279,7 @@ pub struct PtyManager {
     last_enter: Arc<Mutex<HashMap<u32, Instant>>>,
     pending_submits: Arc<Mutex<HashMap<u32, Vec<UserSubmit>>>>,
     /// resize 冷却窗口结束时间:在此之前 PTY 输出不刷新 last_output
-    resize_cooldown_until: Arc<Mutex<HashMap<u32, Instant>>>,
+    tui_redraw_cooldown_until: Arc<Mutex<HashMap<u32, Instant>>>,
 }
 
 impl PtyManager {
@@ -277,7 +293,7 @@ impl PtyManager {
             last_ctrlc: Arc::new(Mutex::new(HashMap::new())),
             last_enter: Arc::new(Mutex::new(HashMap::new())),
             pending_submits: Arc::new(Mutex::new(HashMap::new())),
-            resize_cooldown_until: Arc::new(Mutex::new(HashMap::new())),
+            tui_redraw_cooldown_until: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -300,6 +316,35 @@ impl PtyManager {
             .unwrap()
             .remove(&pty_id)
             .unwrap_or_default()
+    }
+
+    /// 延长 TUI 重绘冷却窗口。采用 max 语义,不会缩短已有的更长冷却。
+    /// resize 与 focus 共用同一冷却字段(效果一致:抑制 TUI 重绘刷新 last_output)。
+    pub fn bump_cooldown(&self, pty_id: u32, duration: Duration) {
+        if let Ok(mut map) = self.tui_redraw_cooldown_until.lock() {
+            let new_until = Instant::now() + duration;
+            let final_until = match map.get(&pty_id).copied() {
+                Some(old) if old > new_until => old,
+                _ => new_until,
+            };
+            map.insert(pty_id, final_until);
+        }
+    }
+
+    pub fn is_in_cooldown(&self, pty_id: u32) -> bool {
+        self.tui_redraw_cooldown_until
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&pty_id).copied())
+            .map_or(false, |until| Instant::now() < until)
+    }
+
+    /// 若 data 是 xterm 焦点事件序列(CSI I / CSI O),打开焦点冷却窗口,
+    /// 避免 TUI 应用对焦点事件的重绘响应被误判为 AI 活跃。
+    pub fn note_focus_event(&self, pty_id: u32, data: &str) {
+        if data == FOCUS_IN_SEQ || data == FOCUS_OUT_SEQ {
+            self.bump_cooldown(pty_id, FOCUS_COOLDOWN);
+        }
     }
 
     /// 追踪用户输入，检测 AI 命令（claude/codex）的执行与退出
@@ -481,7 +526,7 @@ pub fn create_pty(
     let last_output = state.last_output.clone();
     let ai_sessions_flush = state.ai_sessions.clone();
     let last_enter_flush = state.last_enter.clone();
-    let resize_cooldown_flush = state.resize_cooldown_until.clone();
+    let mgr_flush = (*state).clone();
     thread::spawn(move || {
         let mut pending = Vec::new();
 
@@ -595,17 +640,11 @@ pub fn create_pty(
                         },
                     );
 
-                    // 冷却窗口内(刚 resize 过)的输出不刷新 last_output。
-                    // Claude/Codex 等 TUI 应用在 ConPTY resize 信号后会重绘
+                    // 冷却窗口内(resize 或 focus 事件后)的输出不刷新 last_output。
+                    // Claude/Codex 等 TUI 应用在收到 ConPTY resize / 焦点事件后会重绘
                     // Alternate Screen Buffer,这些重绘数据不能被 process_monitor
                     // 当作 AI 活跃信号,否则会触发 ai-working 状态闪烁和假完成通知。
-                    let in_resize_cooldown = resize_cooldown_flush
-                        .lock()
-                        .ok()
-                        .and_then(|m| m.get(&pty_id_for_reader).copied())
-                        .map_or(false, |until| Instant::now() < until);
-
-                    if !in_resize_cooldown {
+                    if !mgr_flush.is_in_cooldown(pty_id_for_reader) {
                         if let Ok(mut map) = last_output.lock() {
                             map.insert(pty_id_for_reader, Instant::now());
                         }
@@ -678,6 +717,9 @@ pub fn write_pty(
     pty_id: u32,
     data: String,
 ) -> Result<(), String> {
+    // 在写入前打开焦点冷却窗口:AI 对焦点事件的重绘响应几乎立即抵达 reader,
+    // 必须早于那之前把冷却建立起来。
+    state.note_focus_event(pty_id, &data);
     {
         let mut instances = state.instances.lock().unwrap();
         let instance = instances.get_mut(&pty_id).ok_or("PTY not found")?;
@@ -721,11 +763,7 @@ pub fn resize_pty(
 
     // 开启冷却窗口:之后 RESIZE_COOLDOWN 内的 PTY 输出(主要是 TUI 重绘)
     // 不会刷新 last_output,从而避免被 process_monitor 误判为 AI 活跃。
-    state
-        .resize_cooldown_until
-        .lock()
-        .unwrap()
-        .insert(pty_id, Instant::now() + RESIZE_COOLDOWN);
+    state.bump_cooldown(pty_id, RESIZE_COOLDOWN);
 
     Ok(())
 }
@@ -740,7 +778,7 @@ pub fn kill_pty(state: tauri::State<'_, PtyManager>, pty_id: u32) -> Result<(), 
     state.last_ctrlc.lock().unwrap().remove(&pty_id);
     state.last_enter.lock().unwrap().remove(&pty_id);
     state.pending_submits.lock().unwrap().remove(&pty_id);
-    state.resize_cooldown_until.lock().unwrap().remove(&pty_id);
+    state.tui_redraw_cooldown_until.lock().unwrap().remove(&pty_id);
 
     // Drop the PTY instance on a background thread.
     //
@@ -1071,5 +1109,82 @@ mod tests {
         mgr.track_input(1, "\x1b[A"); // 上方向键
         mgr.track_input(1, "\x1b[B"); // 下方向键
         assert!(mgr.drain_submits(1).is_empty());
+    }
+
+    #[test]
+    fn focus_in_sequence_opens_cooldown() {
+        let mgr = PtyManager::new();
+        assert!(!mgr.is_in_cooldown(1));
+        mgr.note_focus_event(1, "\x1b[I");
+        assert!(mgr.is_in_cooldown(1));
+    }
+
+    #[test]
+    fn focus_out_sequence_opens_cooldown() {
+        let mgr = PtyManager::new();
+        mgr.note_focus_event(1, "\x1b[O");
+        assert!(mgr.is_in_cooldown(1));
+    }
+
+    #[test]
+    fn ordinary_input_does_not_open_cooldown() {
+        let mgr = PtyManager::new();
+        mgr.note_focus_event(1, "a");
+        mgr.note_focus_event(1, "\r");
+        mgr.note_focus_event(1, "ls -la\r");
+        assert!(!mgr.is_in_cooldown(1));
+    }
+
+    #[test]
+    fn arrow_keys_do_not_open_cooldown() {
+        let mgr = PtyManager::new();
+        mgr.note_focus_event(1, "\x1b[A");
+        mgr.note_focus_event(1, "\x1b[B");
+        mgr.note_focus_event(1, "\x1b[C");
+        mgr.note_focus_event(1, "\x1b[D");
+        assert!(!mgr.is_in_cooldown(1));
+    }
+
+    #[test]
+    fn focus_event_embedded_in_longer_input_is_not_matched() {
+        // 只有严格等于焦点序列才触发冷却,避免用户粘贴的文本意外命中。
+        // xterm.js 的 focus event 一定是一条独立的 onData(来自 triggerDataEvent),
+        // 不会和其他数据拼接。
+        let mgr = PtyManager::new();
+        mgr.note_focus_event(1, "prefix\x1b[Isuffix");
+        assert!(!mgr.is_in_cooldown(1));
+    }
+
+    #[test]
+    fn bump_cooldown_uses_max_semantics() {
+        let mgr = PtyManager::new();
+        // 先写一个长冷却,再写短冷却不应缩短它。
+        mgr.bump_cooldown(1, Duration::from_secs(10));
+        assert!(mgr.is_in_cooldown(1));
+        let long_until = mgr
+            .tui_redraw_cooldown_until
+            .lock()
+            .unwrap()
+            .get(&1)
+            .copied()
+            .unwrap();
+
+        mgr.bump_cooldown(1, Duration::from_millis(50));
+        let after_short = mgr
+            .tui_redraw_cooldown_until
+            .lock()
+            .unwrap()
+            .get(&1)
+            .copied()
+            .unwrap();
+        assert_eq!(long_until, after_short, "短冷却不应覆盖更长的已有冷却");
+    }
+
+    #[test]
+    fn cooldown_is_per_pty() {
+        let mgr = PtyManager::new();
+        mgr.note_focus_event(1, "\x1b[I");
+        assert!(mgr.is_in_cooldown(1));
+        assert!(!mgr.is_in_cooldown(2));
     }
 }
