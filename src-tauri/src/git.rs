@@ -990,6 +990,18 @@ pub fn get_git_diff(
     })
 }
 
+/// 在 Windows GUI 应用(windows_subsystem = "windows")下 spawn console 子进程
+/// (比如 git.exe)默认会弹出 conhost 黑框,并且窗口创建/焦点切换会让 UI 感知卡顿。
+/// 这里统一给 `Command` 加 CREATE_NO_WINDOW 抑制掉控制台分配。
+fn hide_console_window(_cmd: &mut std::process::Command) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        _cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 /// git pull / git push 的共享执行器:
 /// - 校验 `repo_path` 是目录并且包含 `.git`(避免在任意目录上跑 git)
 /// - 在独立线程里 spawn git 进程,通过 mpsc 回传 output
@@ -1009,11 +1021,12 @@ fn run_git_network_command(repo_path: &str, op: &'static str) -> Result<String, 
     let (tx, rx) = std::sync::mpsc::channel();
     let repo_path_owned = repo_path.to_string();
     std::thread::spawn(move || {
-        let result = std::process::Command::new("git")
-            .arg(op)
+        let mut cmd = std::process::Command::new("git");
+        cmd.arg(op)
             .current_dir(&repo_path_owned)
-            .stdin(std::process::Stdio::null())
-            .output();
+            .stdin(std::process::Stdio::null());
+        hide_console_window(&mut cmd);
+        let result = cmd.output();
         // 忽略发送失败:主线程超时后接收端已被 drop
         let _ = tx.send(result);
     });
@@ -1150,10 +1163,12 @@ pub fn git_commit(repo_path: String, message: String) -> Result<String, String> 
         return Err(format!("不是 git 仓库(缺少 .git):{}", repo_path));
     }
 
-    let output = std::process::Command::new("git")
-        .args(["commit", "-m", &message])
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(["commit", "-m", &message])
         .current_dir(&repo_path)
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null());
+    hide_console_window(&mut cmd);
+    let output = cmd
         .output()
         .map_err(|e| format!("启动 git commit 失败:{}", e))?;
 
