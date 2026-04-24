@@ -66,7 +66,7 @@ export function SessionList() {
   }, [activeProject?.path, fetchSessions]);
 
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-[var(--bg-surface)]">
+    <div className="h-full flex flex-col overflow-hidden bg-[var(--bg-surface)] select-none">
       <div className="px-3 pt-2.5 pb-1.5 text-sm text-[var(--text-muted)] uppercase tracking-[0.12em] font-medium flex items-center justify-between">
         <span>Sessions</span>
         {activeProject && (

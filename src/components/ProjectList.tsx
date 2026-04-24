@@ -393,7 +393,7 @@ export function ProjectList() {
         {editingProjectId === project.id ? (
           <input
             ref={editProjectInputRef}
-            className="truncate flex-1 bg-transparent border-b border-[var(--accent)] outline-none text-base text-[var(--text-primary)] px-0 py-0"
+            className="truncate flex-1 bg-transparent border-b border-[var(--accent)] outline-none text-base text-[var(--text-primary)] px-0 py-0 select-text"
             value={editingName}
             onChange={(e) => setEditingName(e.target.value)}
             onBlur={commitProjectRename}
@@ -478,7 +478,7 @@ export function ProjectList() {
           {isEditing ? (
             <input
               ref={editInputRef}
-              className="flex-1 bg-transparent border-b border-[var(--accent)] outline-none text-sm text-[var(--text-primary)] px-0 py-0"
+              className="flex-1 bg-transparent border-b border-[var(--accent)] outline-none text-sm text-[var(--text-primary)] px-0 py-0 select-text"
               value={editingName}
               onChange={(e) => setEditingName(e.target.value)}
               onBlur={commitRename}
@@ -503,7 +503,7 @@ export function ProjectList() {
   const sessionsVisible = config.sessionsVisible;
 
   return (
-    <div className="h-full bg-[var(--bg-surface)] flex flex-col">
+    <div className="h-full bg-[var(--bg-surface)] flex flex-col select-none">
       <Allotment vertical>
         {/* 上半部分：项目列表 */}
         <Allotment.Pane minSize={100} visible={projectsVisible}>

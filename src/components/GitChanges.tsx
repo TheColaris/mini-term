@@ -395,7 +395,7 @@ export function GitChanges({ projectPath: _projectPath, repoPath, onCommitSucces
       {/* Commit area */}
       <div className="flex-shrink-0 border-t border-[var(--border-subtle)] p-2">
         <textarea
-          className="w-full text-sm bg-[var(--bg-base)] text-[var(--text-primary)] border border-[var(--border-default)] rounded px-2 py-1.5 resize-none placeholder:text-[var(--text-muted)]"
+          className="w-full text-sm bg-[var(--bg-base)] text-[var(--text-primary)] border border-[var(--border-default)] rounded px-2 py-1.5 resize-none placeholder:text-[var(--text-muted)] select-text"
           rows={3}
           placeholder="Commit message..."
           value={commitMsg}

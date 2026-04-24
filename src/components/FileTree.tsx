@@ -409,7 +409,7 @@ export function FileTree() {
   }
 
   return (
-    <div className="h-full bg-[var(--bg-surface)] flex flex-col overflow-y-auto border-l border-[var(--border-subtle)]">
+    <div className="h-full bg-[var(--bg-surface)] flex flex-col overflow-y-auto border-l border-[var(--border-subtle)] select-none">
       <div className="px-3 pt-3 pb-1.5 flex items-center justify-between gap-2">
         <span className="text-sm text-[var(--text-muted)] uppercase tracking-[0.12em] font-medium truncate">
           Files — {project.name}

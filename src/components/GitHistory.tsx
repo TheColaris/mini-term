@@ -66,7 +66,7 @@ export function GitHistory() {
   }
 
   return (
-    <div className="h-full bg-[var(--bg-surface)] flex flex-col border-t border-[var(--border-subtle)]">
+    <div className="h-full bg-[var(--bg-surface)] flex flex-col border-t border-[var(--border-subtle)] select-none">
       {/* Tab 栏 */}
       <div className="flex items-center gap-0 px-3 pt-2 pb-0 flex-shrink-0">
         {(['history', 'changes'] as const).map((tab) => (
