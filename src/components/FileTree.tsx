@@ -414,37 +414,50 @@ export function FileTree() {
         <span className="text-sm text-[var(--text-muted)] uppercase tracking-[0.12em] font-medium truncate">
           Files — {project.name}
         </span>
-        {config.editors.length > 0 && (
-          <div className="flex items-center flex-shrink-0">
-            <button
-              type="button"
-              onClick={() => handleOpenInEditor()}
-              title={`使用${config.editors.find((e) => e.name === config.defaultEditor)?.name ?? config.editors[0]?.name ?? '编辑器'}打开`}
-              className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors text-xs leading-none px-1.5 py-0.5 rounded-l-[var(--radius-sm)] hover:bg-[var(--border-subtle)]"
-            >
-              {config.editors.find((e) => e.name === config.defaultEditor)?.name ?? config.editors[0]?.name}
-            </button>
-            {config.editors.length > 1 && (
+        <div className="flex items-center flex-shrink-0 gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              loadRootEntries();
+              loadGitStatus();
+            }}
+            title="刷新"
+            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors text-sm leading-none px-1.5 py-0.5 rounded-[var(--radius-sm)] hover:bg-[var(--border-subtle)]"
+          >
+            ↻
+          </button>
+          {config.editors.length > 0 && (
+            <div className="flex items-center">
               <button
                 type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  showContextMenu(rect.left, rect.bottom + 4, config.editors.map((editor) => ({
-                    label: editor.name + (editor.name === (config.defaultEditor ?? config.editors[0]?.name) ? ' (*)' : ''),
-                    onClick: () => handleSwitchAndOpen(editor.name),
-                  })));
-                }}
-                title="选择其他编辑器"
-                className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors text-xs leading-none pl-0.5 pr-1 py-0.5 rounded-r-[var(--radius-sm)] hover:bg-[var(--border-subtle)] border-l border-[var(--border-subtle)]"
+                onClick={() => handleOpenInEditor()}
+                title={`使用${config.editors.find((e) => e.name === config.defaultEditor)?.name ?? config.editors[0]?.name ?? '编辑器'}打开`}
+                className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors text-xs leading-none px-1.5 py-0.5 rounded-l-[var(--radius-sm)] hover:bg-[var(--border-subtle)]"
               >
-                <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">
-                  <path d="M1.5 3L4 5.5L6.5 3" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+                {config.editors.find((e) => e.name === config.defaultEditor)?.name ?? config.editors[0]?.name}
               </button>
-            )}
-          </div>
-        )}
+              {config.editors.length > 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    showContextMenu(rect.left, rect.bottom + 4, config.editors.map((editor) => ({
+                      label: editor.name + (editor.name === (config.defaultEditor ?? config.editors[0]?.name) ? ' (*)' : ''),
+                      onClick: () => handleSwitchAndOpen(editor.name),
+                    })));
+                  }}
+                  title="选择其他编辑器"
+                  className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors text-xs leading-none pl-0.5 pr-1 py-0.5 rounded-r-[var(--radius-sm)] hover:bg-[var(--border-subtle)] border-l border-[var(--border-subtle)]"
+                >
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true">
+                    <path d="M1.5 3L4 5.5L6.5 3" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex-1 px-1" onContextMenu={handleRootContextMenu}>
         {rootEntries.map((entry) => (
