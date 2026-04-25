@@ -18,6 +18,7 @@ import { useAiSubmitMarker } from './hooks/useAiSubmitMarker';
 import { useMarkerHotkeys } from './hooks/useMarkerHotkeys';
 import { checkForUpdate, type ReleaseInfo } from './utils/updateChecker';
 import { applyTheme } from './utils/themeManager';
+import { includeActiveProject } from './utils/projectKeepAlive';
 import type { AppConfig, PtyStatusChangePayload, PtyExitPayload, PaneStatus } from './types';
 
 export function App() {
@@ -25,6 +26,7 @@ export function App() {
   const [configOpen, setConfigOpen] = useState(false);
   const [currentVersion, setCurrentVersion] = useState('');
   const [updateInfo, setUpdateInfo] = useState<ReleaseInfo | null>(null);
+  const [mountedProjectIds, setMountedProjectIds] = useState<string[]>([]);
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const config = useAppStore((s) => s.config);
   const setConfig = useAppStore((s) => s.setConfig);
@@ -151,9 +153,17 @@ export function App() {
     prevProjectRef.current = activeProjectId;
   }, [activeProjectId]);
 
+  useEffect(() => {
+    const existingIds = new Set(config.projects.map((p) => p.id));
+    setMountedProjectIds((ids) =>
+      includeActiveProject(ids.filter((id) => existingIds.has(id)), activeProjectId)
+    );
+  }, [activeProjectId, config.projects]);
+
   // 派生：左栏/中栏是否可见
   const leftColumnVisible = config.projectsVisible || config.sessionsVisible;
   const middleColumnVisible = config.filesVisible || config.gitVisible;
+  const terminalProjectIds = includeActiveProject(mountedProjectIds, activeProjectId);
 
   // 防抖保存布局尺寸
   const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -245,17 +255,22 @@ export function App() {
           {/* 右栏：Terminal */}
           <Allotment.Pane>
             <div className="relative h-full">
-              {(() => {
-                const activeProject = config.projects.find((p) => p.id === activeProjectId);
-                if (!activeProject) return null;
+              {terminalProjectIds.map((projectId) => {
+                const project = config.projects.find((p) => p.id === projectId);
+                if (!project) return null;
                 return (
-                  <TerminalArea
-                    key={activeProject.id}
-                    projectId={activeProject.id}
-                    projectPath={activeProject.path}
-                  />
+                  <div
+                    key={project.id}
+                    className="absolute inset-0"
+                    style={{ display: project.id === activeProjectId ? 'block' : 'none' }}
+                  >
+                    <TerminalArea
+                      projectId={project.id}
+                      projectPath={project.path}
+                    />
+                  </div>
                 );
-              })()}
+              })}
               {config.projects.length === 0 && (
                 <div className="h-full bg-[var(--bg-terminal)] flex items-center justify-center text-[var(--text-muted)] text-sm">
                   请先在左栏添加项目
