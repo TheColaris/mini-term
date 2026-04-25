@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.2.26-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-0.2.27-blue" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078D4" alt="platform">
   <img src="https://img.shields.io/badge/macOS%20%7C%20Linux-experimental-lightgrey" alt="platform-experimental">
   <img src="https://img.shields.io/badge/Tauri-v2-orange" alt="tauri">
@@ -42,7 +42,7 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 - **递归分屏** — 横向 / 纵向任意嵌套分屏，Allotment 拖拽调整比例
 - **高性能渲染** — xterm.js v6 + WebGL 加速，自动降级为 Canvas
 - **10 万行滚动缓冲** — 拦截 CSI 3J（ED3）指令，Claude / Codex 等 TUI 清屏时保留上滚历史
-- **终端缓存** — 切换标签 / 分屏不重建 xterm 实例，已有内容不丢失
+- **终端缓存** — 切换项目 / 标签 / 分屏不重建 xterm 实例，已有内容不丢失；启动按需懒加载，仅当前可见 pane 创建 PTY，避免历史项目终端越多启动越卡
 - **复制粘贴** — `Ctrl+Shift+C` / `Ctrl+Shift+V` 快捷键 + 右键菜单，未选中时"复制"自动置灰；Windows 大段多行粘贴自动分块写入，防止 ConPTY 丢行
 - **长文本粘贴** — 剪贴板文本 ≥10 行或 ≥2000 字符时自动转存为临时 `.txt` 并粘贴带引号的文件路径，避免 AI 工具直接处理超长内容引发性能与 paste bracket 问题
 - **图片粘贴** — 剪贴板含截图时自动检测，通过 Win32 API 保存为临时 PNG 并粘贴带引号的路径，兼容 PinPix 等非标准格式
@@ -107,7 +107,7 @@ Mini-Term 用一个轻量桌面应用解决以上所有问题。
 | Git | git2 0.19 |
 | 文件监听 | notify 7 + ignore 0.4（.gitignore 过滤） |
 | Tauri 插件 | `window-state` · `clipboard-manager` · `dialog` · `opener` |
-| 测试覆盖 | 63 个 Rust 单元测试（pty / fs / config） |
+| 测试覆盖 | 64 个 Rust 单元测试（pty / fs / config） |
 
 ## 快速开始
 
