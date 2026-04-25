@@ -111,7 +111,7 @@ export interface PaneState {
   shellName: string;
   customTitle?: string;
   status: PaneStatus;
-  ptyId: number;
+  ptyId?: number;
 }
 
 // === AI 会话 ===

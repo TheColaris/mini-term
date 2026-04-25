@@ -10,7 +10,6 @@ import type {
   SplitNode,
   PaneState,
   PaneStatus,
-  SavedPane,
   SavedSplitNode,
   SavedTab,
   SavedProjectLayout,
@@ -18,6 +17,7 @@ import type {
   AiMarker,
   AiUserSubmitPayload,
 } from './types';
+import { restoreSavedProjectLayout } from './utils/layoutRestore';
 import {
   deepCloneTree,
   removeFromTree,
@@ -71,7 +71,7 @@ function updatePaneStatus(node: SplitNode, ptyId: number, status: PaneStatus): S
 
 // 收集所有 pane 的 ptyId
 export function collectPtyIds(node: SplitNode): number[] {
-  if (node.type === 'leaf') return node.panes.map((p) => p.ptyId);
+  if (node.type === 'leaf') return node.panes.flatMap((p) => p.ptyId === undefined ? [] : [p.ptyId]);
   return node.children.flatMap(collectPtyIds);
 }
 
@@ -85,6 +85,30 @@ function findPaneByPty(node: SplitNode, ptyId: number): PaneState | null {
     if (found) return found;
   }
   return null;
+}
+
+function updatePaneById(
+  node: SplitNode,
+  paneId: string,
+  updater: (pane: PaneState) => PaneState,
+): SplitNode {
+  if (node.type === 'leaf') {
+    const idx = node.panes.findIndex((p) => p.id === paneId);
+    if (idx < 0) return node;
+    const updatedPane = updater(node.panes[idx]);
+    if (updatedPane === node.panes[idx]) return node;
+    const newPanes = [...node.panes];
+    newPanes[idx] = updatedPane;
+    return { ...node, panes: newPanes };
+  }
+
+  let changed = false;
+  const children = node.children.map((child) => {
+    const updated = updatePaneById(child, paneId, updater);
+    if (updated !== child) changed = true;
+    return updated;
+  });
+  return changed ? { ...node, children } : node;
 }
 
 // 序列化 SplitNode 树（剥离运行时数据）
@@ -109,80 +133,16 @@ export function serializeLayout(ps: ProjectState): SavedProjectLayout {
   return { tabs, activeTabIndex: activeTabIndex >= 0 ? activeTabIndex : 0 };
 }
 
-// 反序列化：重建 SplitNode 树并创建 PTY
-async function restoreSplitNode(
-  saved: SavedSplitNode,
-  projectPath: string,
-  config: AppConfig,
-): Promise<SplitNode | null> {
-  if (saved.type === 'leaf') {
-    // Backward compatibility: old format had `pane` (single), new has `panes` (array).
-    // TODO: remove this compat shim once all users have migrated (added in v0.2.0).
-    const savedPanes = saved.panes ?? [((saved as any).pane as SavedPane)].filter(Boolean);
-    const panes: PaneState[] = [];
-    for (const savedPane of savedPanes) {
-      const shell =
-        config.availableShells.find((s) => s.name === savedPane.shellName)
-        ?? config.availableShells.find((s) => s.name === config.defaultShell)
-        ?? config.availableShells[0];
-      if (!shell) continue;
-      try {
-        const ptyId = await invoke<number>('create_pty', {
-          shell: shell.command,
-          args: shell.args ?? [],
-          cwd: projectPath,
-        });
-        panes.push({ id: genId(), shellName: shell.name, status: 'idle' as PaneStatus, ptyId });
-      } catch {
-        // skip failed pane
-      }
-    }
-    if (panes.length === 0) return null;
-    return {
-      type: 'leaf',
-      panes,
-      activePaneId: panes[0].id,
-    };
-  }
-
-  const children: SplitNode[] = [];
-  for (const child of saved.children) {
-    const restored = await restoreSplitNode(child, projectPath, config);
-    if (restored) children.push(restored);
-  }
-  if (children.length === 0) return null;
-  if (children.length === 1) return children[0];
-  return {
-    type: 'split',
-    direction: saved.direction,
-    children,
-    sizes: children.length === saved.sizes.length ? [...saved.sizes] : children.map(() => 100 / children.length),
-  };
-}
-
-export async function restoreLayout(
+export function restoreLayout(
   projectId: string,
   savedLayout: SavedProjectLayout,
-  projectPath: string,
   config: AppConfig,
-): Promise<void> {
-  const tabs: TerminalTab[] = [];
-  for (const savedTab of savedLayout.tabs) {
-    const layout = await restoreSplitNode(savedTab.splitLayout, projectPath, config);
-    if (layout) {
-      tabs.push({
-        id: genId(),
-        customTitle: savedTab.customTitle,
-        splitLayout: layout,
-        status: 'idle',
-      });
-    }
-  }
-  if (tabs.length === 0) return;
-  const activeTabId = tabs[savedLayout.activeTabIndex]?.id ?? tabs[0]?.id ?? '';
+): void {
+  const restored = restoreSavedProjectLayout(projectId, savedLayout, config, genId);
+  if (!restored) return;
   useAppStore.setState((state) => {
     const newStates = new Map(state.projectStates);
-    newStates.set(projectId, { id: projectId, tabs, activeTabId });
+    newStates.set(projectId, restored);
     return { projectStates: newStates };
   });
 }
@@ -325,6 +285,8 @@ interface AppStore {
 
   // Pane 状态
   updatePaneStatusByPty: (ptyId: number, status: PaneStatus) => void;
+  setPanePty: (projectId: string, paneId: string, ptyId: number) => void;
+  updatePaneStatusByPaneId: (projectId: string, paneId: string, status: PaneStatus) => void;
 
   // AI 任务分段 marker
   markersByPty: Map<number, AiMarker[]>;
@@ -601,6 +563,49 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
       }
 
+      return { projectStates: newStates };
+    }),
+
+  setPanePty: (projectId, paneId, ptyId) =>
+    set((state) => {
+      const ps = state.projectStates.get(projectId);
+      if (!ps) return state;
+
+      let changed = false;
+      const tabs = ps.tabs.map((tab) => {
+        const splitLayout = updatePaneById(tab.splitLayout, paneId, (pane) => {
+          if (pane.ptyId !== undefined) return pane;
+          return { ...pane, ptyId, status: 'idle' };
+        });
+        if (splitLayout === tab.splitLayout) return tab;
+        changed = true;
+        return { ...tab, splitLayout, status: getHighestStatus(splitLayout) };
+      });
+      if (!changed) return state;
+
+      const newStates = new Map(state.projectStates);
+      newStates.set(projectId, { ...ps, tabs });
+      return { projectStates: newStates };
+    }),
+
+  updatePaneStatusByPaneId: (projectId, paneId, status) =>
+    set((state) => {
+      const ps = state.projectStates.get(projectId);
+      if (!ps) return state;
+
+      let changed = false;
+      const tabs = ps.tabs.map((tab) => {
+        const splitLayout = updatePaneById(tab.splitLayout, paneId, (pane) => (
+          pane.status === status ? pane : { ...pane, status }
+        ));
+        if (splitLayout === tab.splitLayout) return tab;
+        changed = true;
+        return { ...tab, splitLayout, status: getHighestStatus(splitLayout) };
+      });
+      if (!changed) return state;
+
+      const newStates = new Map(state.projectStates);
+      newStates.set(projectId, { ...ps, tabs });
       return { projectStates: newStates };
     }),
 

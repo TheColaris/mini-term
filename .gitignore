@@ -25,7 +25,7 @@ dist-ssr
 
 # Brainstorm / temp files
 .superpowers
-.tmp-tests/*.js
+.tmp-tests/
 
 # Git worktrees
 .worktrees

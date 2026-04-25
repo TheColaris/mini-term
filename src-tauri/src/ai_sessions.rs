@@ -3,6 +3,26 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+const MAX_CLAUDE_SESSION_FILES_TO_SCAN: usize = 300;
+const MAX_CODEX_SESSION_FILES_TO_SCAN: usize = 500;
+const MAX_SESSIONS_PER_SOURCE: usize = 80;
+const MAX_TOTAL_SESSIONS: usize = 120;
+const SESSION_CACHE_TTL: Duration = Duration::from_secs(2);
+
+#[derive(Clone)]
+struct CachedSessions {
+    loaded_at: Instant,
+    sessions: Vec<AiSession>,
+}
+
+static SESSION_CACHE: OnceLock<Mutex<HashMap<String, CachedSessions>>> = OnceLock::new();
+
+fn session_cache() -> &'static Mutex<HashMap<String, CachedSessions>> {
+    SESSION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,17 +69,22 @@ fn get_claude_sessions(project_path: &str) -> Vec<AiSession> {
         return vec![];
     }
 
-    let mut sessions = Vec::new();
-
     let entries = match fs::read_dir(&sessions_dir) {
         Ok(e) => e,
         Err(_) => return vec![],
     };
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-            continue;
+    let mut paths: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+        .collect();
+    sort_newest_session_paths(&mut paths, MAX_CLAUDE_SESSION_FILES_TO_SCAN);
+
+    let mut sessions = Vec::new();
+    for path in paths {
+        if sessions.len() >= MAX_SESSIONS_PER_SOURCE {
+            break;
         }
 
         let id = path
@@ -167,7 +192,18 @@ fn get_codex_sessions(project_path: &str) -> Vec<AiSession> {
     let mut sessions = Vec::new();
     let normalized_project = normalize_path(project_path);
 
-    walk_codex_sessions(&sessions_dir, &normalized_project, &thread_names, &mut sessions);
+    let mut session_paths = Vec::new();
+    collect_codex_session_paths(&sessions_dir, &mut session_paths);
+    sort_newest_session_paths(&mut session_paths, MAX_CODEX_SESSION_FILES_TO_SCAN);
+
+    for path in session_paths {
+        if sessions.len() >= MAX_SESSIONS_PER_SOURCE {
+            break;
+        }
+        if let Some(session) = try_read_codex_session(&path, &normalized_project, &thread_names) {
+            sessions.push(session);
+        }
+    }
 
     sessions
 }
@@ -197,13 +233,16 @@ fn load_codex_thread_names(codex_dir: &Path) -> HashMap<String, String> {
     map
 }
 
-/// 递归遍历 sessions/<year>/<month>/<day>/ 目录
-fn walk_codex_sessions(
-    dir: &Path,
-    normalized_project: &str,
-    thread_names: &HashMap<String, String>,
-    sessions: &mut Vec<AiSession>,
-) {
+fn sort_newest_session_paths(paths: &mut Vec<PathBuf>, limit: usize) {
+    paths.sort_by(|a, b| b.to_string_lossy().cmp(&a.to_string_lossy()));
+    if paths.len() > limit {
+        paths.truncate(limit);
+    }
+}
+
+/// 递归遍历 sessions/<year>/<month>/<day>/ 目录，仅收集文件路径。
+/// 真正读取 JSONL 前先按路径日期排序和限量，避免历史记录增长后每次刷新都读全量内容。
+fn collect_codex_session_paths(dir: &Path, paths: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -212,11 +251,9 @@ fn walk_codex_sessions(
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            walk_codex_sessions(&path, normalized_project, thread_names, sessions);
+            collect_codex_session_paths(&path, paths);
         } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-            if let Some(session) = try_read_codex_session(&path, normalized_project, thread_names) {
-                sessions.push(session);
-            }
+            paths.push(path);
         }
     }
 }
@@ -335,6 +372,17 @@ fn try_read_codex_session(
 
 #[tauri::command]
 pub fn get_ai_sessions(project_path: String) -> Result<Vec<AiSession>, String> {
+    let cache_key = normalize_path(&project_path);
+    let mut cache = session_cache()
+        .lock()
+        .map_err(|_| "session cache lock poisoned".to_string())?;
+
+    if let Some(cached) = cache.get(&cache_key) {
+        if cached.loaded_at.elapsed() < SESSION_CACHE_TTL {
+            return Ok(cached.sessions.clone());
+        }
+    }
+
     let mut sessions = Vec::new();
 
     sessions.extend(get_claude_sessions(&project_path));
@@ -342,6 +390,34 @@ pub fn get_ai_sessions(project_path: String) -> Result<Vec<AiSession>, String> {
 
     // 按时间戳降序（最新在前）
     sessions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    if sessions.len() > MAX_TOTAL_SESSIONS {
+        sessions.truncate(MAX_TOTAL_SESSIONS);
+    }
+
+    cache.insert(cache_key, CachedSessions {
+        loaded_at: Instant::now(),
+        sessions: sessions.clone(),
+    });
 
     Ok(sessions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sort_newest_session_paths_keeps_recent_files_first() {
+        let mut paths = vec![
+            PathBuf::from(r"C:\Users\test\.codex\sessions\2025\10\28\rollout-2025-10-28T10-47-08-old.jsonl"),
+            PathBuf::from(r"C:\Users\test\.codex\sessions\2026\04\24\rollout-2026-04-24T19-00-00-newest.jsonl"),
+            PathBuf::from(r"C:\Users\test\.codex\sessions\2026\01\02\rollout-2026-01-02T09-00-00-middle.jsonl"),
+        ];
+
+        sort_newest_session_paths(&mut paths, 2);
+
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].to_string_lossy().contains("newest"));
+        assert!(paths[1].to_string_lossy().contains("middle"));
+    }
 }

@@ -60,23 +60,23 @@ export function App() {
       }
 
       applyTheme(cfg.theme ?? 'auto');
+
+      for (const p of cfg.projects) {
+        if (p.savedLayout && p.savedLayout.tabs.length > 0) {
+          restoreLayout(p.id, p.savedLayout, cfg);
+        }
+      }
+
       setConfigLoaded(true);
 
-      // 恢复各项目的终端布局，完成后再显示窗口，避免白屏闪烁
+      // 布局元数据恢复完成后显示窗口；终端进程由可见 pane 按需创建。
       const showWindow = () => {
-        // 双 rAF 确保 React 渲染 + xterm.js canvas 绑定完成后再显示
+        // 双 rAF 确保 React 首帧布局完成后再显示。
         requestAnimationFrame(() => requestAnimationFrame(() => {
           getCurrentWindow().show();
         }));
       };
-      const layoutProjects = cfg.projects.filter((p) => p.savedLayout && p.savedLayout.tabs.length > 0);
-      if (layoutProjects.length > 0) {
-        Promise.all(
-          layoutProjects.map((p) => restoreLayout(p.id, p.savedLayout!, p.path, cfg))
-        ).then(showWindow).catch(() => showWindow());
-      } else {
-        showWindow();
-      }
+      showWindow();
     });
   }, []);
 
@@ -245,15 +245,17 @@ export function App() {
           {/* 右栏：Terminal */}
           <Allotment.Pane>
             <div className="relative h-full">
-              {config.projects.map((project) => (
-                <div
-                  key={project.id}
-                  className="absolute inset-0"
-                  style={{ display: project.id === activeProjectId ? 'block' : 'none' }}
-                >
-                  <TerminalArea projectId={project.id} projectPath={project.path} />
-                </div>
-              ))}
+              {(() => {
+                const activeProject = config.projects.find((p) => p.id === activeProjectId);
+                if (!activeProject) return null;
+                return (
+                  <TerminalArea
+                    key={activeProject.id}
+                    projectId={activeProject.id}
+                    projectPath={activeProject.path}
+                  />
+                );
+              })()}
               {config.projects.length === 0 && (
                 <div className="h-full bg-[var(--bg-terminal)] flex items-center justify-center text-[var(--text-muted)] text-sm">
                   请先在左栏添加项目

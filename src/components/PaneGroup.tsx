@@ -11,8 +11,21 @@ import { disposeTerminal } from '../utils/terminalCache';
 import type { SplitNode, PaneState, ShellConfig, AiMarker } from '../types';
 
 const EMPTY_MARKERS: AiMarker[] = [];
+const hydratingPaneIds = new Set<string>();
+
+function findPaneById(node: SplitNode, paneId: string): PaneState | null {
+  if (node.type === 'leaf') {
+    return node.panes.find((pane) => pane.id === paneId) ?? null;
+  }
+  for (const child of node.children) {
+    const found = findPaneById(child, paneId);
+    if (found) return found;
+  }
+  return null;
+}
 
 interface Props {
+  projectId: string;
   node: SplitNode & { type: 'leaf' };
   projectPath: string;
   onSplit: (paneId: string, direction: 'horizontal' | 'vertical') => void;
@@ -20,11 +33,59 @@ interface Props {
   onUpdateNode: (updated: SplitNode) => void;
 }
 
-export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNode }: Props) {
+export function PaneGroup({ projectId, node, projectPath, onSplit, onClosePane, onUpdateNode }: Props) {
   const config = useAppStore((s) => s.config);
+  const setPanePty = useAppStore((s) => s.setPanePty);
+  const updatePaneStatusByPaneId = useAppStore((s) => s.updatePaneStatusByPaneId);
   const [headerHover, setHeaderHover] = useState(false);
 
   const activePane = node.panes.find((p) => p.id === node.activePaneId) ?? node.panes[0];
+
+  useEffect(() => {
+    if (!activePane || activePane.ptyId !== undefined || activePane.status === 'error') return;
+    if (hydratingPaneIds.has(activePane.id)) return;
+
+    const shell = config.availableShells.find((s) => s.name === activePane.shellName)
+      ?? config.availableShells.find((s) => s.name === config.defaultShell)
+      ?? config.availableShells[0];
+    if (!shell) {
+      updatePaneStatusByPaneId(projectId, activePane.id, 'error');
+      return;
+    }
+
+    hydratingPaneIds.add(activePane.id);
+    invoke<number>('create_pty', {
+      shell: shell.command,
+      args: shell.args ?? [],
+      cwd: projectPath,
+    })
+      .then((ptyId) => {
+        const ps = useAppStore.getState().projectStates.get(projectId);
+        const pane = ps?.tabs
+          .map((tab) => findPaneById(tab.splitLayout, activePane.id))
+          .find(Boolean);
+        if (pane && pane.ptyId === undefined) {
+          setPanePty(projectId, activePane.id, ptyId);
+        } else {
+          invoke('kill_pty', { ptyId }).catch(() => {});
+        }
+      })
+      .catch(() => updatePaneStatusByPaneId(projectId, activePane.id, 'error'))
+      .finally(() => {
+        hydratingPaneIds.delete(activePane.id);
+      });
+  }, [
+    activePane?.id,
+    activePane?.ptyId,
+    activePane?.shellName,
+    activePane?.status,
+    config.availableShells,
+    config.defaultShell,
+    projectId,
+    projectPath,
+    setPanePty,
+    updatePaneStatusByPaneId,
+  ]);
 
   const handleNewTab = useCallback(async (selectedShell?: ShellConfig) => {
     const shell = selectedShell
@@ -81,9 +142,11 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
     const confirmed = await showConfirm(title, message);
     if (!confirmed) return;
 
-    await invoke('kill_pty', { ptyId: pane.ptyId });
-    disposeTerminal(pane.ptyId);
-    useAppStore.getState().clearMarkersForPty(pane.ptyId);
+    if (pane.ptyId !== undefined) {
+      await invoke('kill_pty', { ptyId: pane.ptyId });
+      disposeTerminal(pane.ptyId);
+      useAppStore.getState().clearMarkersForPty(pane.ptyId);
+    }
 
     const remaining = node.panes.filter((p) => p.id !== paneId);
     if (remaining.length === 0) {
@@ -134,9 +197,11 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
     if (!confirmed) return;
 
     for (const pane of node.panes) {
-      await invoke('kill_pty', { ptyId: pane.ptyId });
-      disposeTerminal(pane.ptyId);
-      useAppStore.getState().clearMarkersForPty(pane.ptyId);
+      if (pane.ptyId !== undefined) {
+        await invoke('kill_pty', { ptyId: pane.ptyId });
+        disposeTerminal(pane.ptyId);
+        useAppStore.getState().clearMarkersForPty(pane.ptyId);
+      }
     }
     onClosePane();
   }, [node.panes, onClosePane]);
@@ -144,7 +209,7 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
   const [markerOpen, setMarkerOpen] = useState(false);
   const [markerAnchor, setMarkerAnchor] = useState<{ top: number; right: number } | null>(null);
   const markers = useAppStore(
-    (s) => (activePane && s.markersByPty.get(activePane.ptyId)) || EMPTY_MARKERS,
+    (s) => (activePane?.ptyId !== undefined && s.markersByPty.get(activePane.ptyId)) || EMPTY_MARKERS,
   );
   const markerBtnRef = useRef<HTMLButtonElement>(null);
   const markerPopoverRef = useRef<HTMLDivElement>(null);
@@ -171,6 +236,11 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
   useEffect(() => {
     setMarkerOpen(false);
   }, [activePane?.ptyId]);
+
+  const handleRetryCreatePty = useCallback(() => {
+    if (!activePane) return;
+    updatePaneStatusByPaneId(projectId, activePane.id, 'idle');
+  }, [activePane, projectId, updatePaneStatusByPaneId]);
 
   if (!activePane) return null;
 
@@ -231,7 +301,7 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
         <div
           className="ml-auto flex items-center gap-0.5 px-2 text-[12px]"
         >
-          {markers.length > 0 && (
+          {activePane.ptyId !== undefined && markers.length > 0 && (
             <button
               ref={markerBtnRef}
               type="button"
@@ -274,20 +344,31 @@ export function PaneGroup({ node, projectPath, onSplit, onClosePane, onUpdateNod
 
       {/* Active terminal */}
       <div className="flex-1 overflow-hidden relative">
-        {node.panes.map((pane) => (
-          <div
-            key={pane.ptyId}
-            className="absolute inset-0"
-            style={{ display: pane.id === activePane.id ? 'block' : 'none' }}
-          >
+        <div className="absolute inset-0">
+          {activePane.ptyId !== undefined ? (
             <TerminalInstance
-              ptyId={pane.ptyId}
+              ptyId={activePane.ptyId}
             />
-          </div>
-        ))}
+          ) : activePane.status === 'error' ? (
+            <div className="h-full flex flex-col items-center justify-center gap-2 text-[var(--text-muted)] text-sm">
+              <div>终端启动失败</div>
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-[var(--radius-sm)] border border-[var(--border-default)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                onClick={handleRetryCreatePty}
+              >
+                重试
+              </button>
+            </div>
+          ) : (
+            <div className="h-full flex items-center justify-center text-[var(--text-muted)] text-sm">
+              正在启动终端...
+            </div>
+          )}
+        </div>
       </div>
 
-      {markerOpen && markerAnchor && createPortal(
+      {activePane.ptyId !== undefined && markerOpen && markerAnchor && createPortal(
         <div
           ref={markerPopoverRef}
           className="fixed z-50 rounded-md border shadow-lg"

@@ -169,14 +169,14 @@ export function TerminalArea({ projectId, projectPath }: Props) {
   return (
     <div className="flex flex-col h-full bg-[var(--bg-terminal)]">
       <div className="flex-1 overflow-hidden relative">
-        {ps?.tabs.map((tab) => (
+        {activeTab && (
           <div
-            key={tab.id}
+            key={activeTab.id}
             className="absolute inset-0"
-            style={{ display: tab.id === ps.activeTabId ? 'block' : 'none' }}
           >
             <SplitLayout
-              node={tab.splitLayout}
+              projectId={projectId}
+              node={activeTab.splitLayout}
               projectPath={projectPath}
               onSplit={handleSplitPane}
               onCloseLeaf={handleCloseLeaf}
@@ -184,7 +184,7 @@ export function TerminalArea({ projectId, projectPath }: Props) {
               onLayoutChange={handleLayoutChange}
             />
           </div>
-        ))}
+        )}
 
         {(!ps || ps.tabs.length === 0) && (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-[var(--text-muted)]">

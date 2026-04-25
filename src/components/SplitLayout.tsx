@@ -4,6 +4,7 @@ import { PaneGroup } from './PaneGroup';
 import type { SplitNode } from '../types';
 
 interface Props {
+  projectId: string;
   node: SplitNode;
   projectPath: string;
   onSplit?: (paneId: string, direction: 'horizontal' | 'vertical') => void;
@@ -20,7 +21,7 @@ function getNodeKey(node: SplitNode): string {
   return getNodeKey(node.children[0]);
 }
 
-export function SplitLayout({ node, projectPath, onSplit, onCloseLeaf, onUpdateNode, onLayoutChange }: Props) {
+export function SplitLayout({ projectId, node, projectPath, onSplit, onCloseLeaf, onUpdateNode, onLayoutChange }: Props) {
   const rafRef = useRef<number>(0);
   const nodeRef = useRef(node);
   nodeRef.current = node;
@@ -28,6 +29,7 @@ export function SplitLayout({ node, projectPath, onSplit, onCloseLeaf, onUpdateN
   if (node.type === 'leaf') {
     return (
       <PaneGroup
+        projectId={projectId}
         node={node}
         projectPath={projectPath}
         onSplit={onSplit ?? (() => {})}
@@ -92,6 +94,7 @@ export function SplitLayout({ node, projectPath, onSplit, onCloseLeaf, onUpdateN
       {node.children.map((child, index) => (
         <Allotment.Pane key={getNodeKey(child)}>
           <SplitLayout
+            projectId={projectId}
             node={child}
             projectPath={projectPath}
             onSplit={onSplit}
