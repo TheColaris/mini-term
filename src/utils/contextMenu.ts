@@ -26,6 +26,8 @@ export function showContextMenu(x: number, y: number, items: MenuEntry[]) {
   menu.className = 'fixed ctx-menu text-xs';
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
+  // 先隐藏,挂载后测量尺寸再决定最终位置,避免边界外溢
+  menu.style.visibility = 'hidden';
 
   // 先声明 cleanup/onKey,再构建菜单项,避免 item.onclick 里前向引用
   const cleanup = () => {
@@ -62,6 +64,23 @@ export function showContextMenu(x: number, y: number, items: MenuEntry[]) {
   });
 
   document.body.appendChild(menu);
+
+  // 边界检测:右侧溢出则向左弹,底部溢出则向上弹
+  const margin = 4;
+  const { offsetWidth: w, offsetHeight: h } = menu;
+  const viewportW = window.innerWidth;
+  const viewportH = window.innerHeight;
+  let finalX = x;
+  let finalY = y;
+  if (x + w + margin > viewportW) {
+    finalX = Math.max(margin, x - w);
+  }
+  if (y + h + margin > viewportH) {
+    finalY = Math.max(margin, y - h);
+  }
+  menu.style.left = `${finalX}px`;
+  menu.style.top = `${finalY}px`;
+  menu.style.visibility = '';
 
   currentCleanup = cleanup;
 
