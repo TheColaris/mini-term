@@ -358,5 +358,11 @@ export async function pasteToTerminal(ptyId: number): Promise<void> {
     } catch { /* 写文件失败，回退到直接粘贴 */ }
   }
 
+  const cached = getCachedTerminal(ptyId);
+  if (cached) {
+    cached.term.paste(text);
+    return;
+  }
+
   await enqueuePtyWrite(ptyId, text);
 }

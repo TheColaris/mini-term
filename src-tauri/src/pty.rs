@@ -61,6 +61,7 @@ struct InputState {
     line: Vec<char>,
     cursor: usize,
     escape: EscapeState,
+    bracketed_paste: bool,
 }
 
 impl InputState {
@@ -115,6 +116,8 @@ impl InputState {
 
     fn apply_csi(&mut self, sequence: &str) {
         match sequence {
+            "200~" => self.bracketed_paste = true,
+            "201~" => self.bracketed_paste = false,
             "C" => self.move_right(),
             "D" => self.move_left(),
             "H" | "1~" | "7~" => self.move_home(),
@@ -363,10 +366,19 @@ impl PtyManager {
                 if state.consume_escape_char(ch) {
                     continue;
                 }
-                match ch {
-                    '\x1b' => {
-                        state.escape = EscapeState::Escape;
+                if ch == '\x1b' {
+                    state.escape = EscapeState::Escape;
+                    continue;
+                }
+                if state.bracketed_paste {
+                    match ch {
+                        '\r' | '\n' => state.insert_char('\n'),
+                        c if c >= ' ' => state.insert_char(c),
+                        _ => {}
                     }
+                    continue;
+                }
+                match ch {
                     '\x03' => {
                         state.clear_line();
                         if in_ai {
@@ -1100,6 +1112,26 @@ mod tests {
         assert_eq!(submits.len(), 2);
         assert_eq!(submits[0].line, "first question");
         assert_eq!(submits[1].line, "follow up");
+    }
+
+    #[test]
+    fn track_input_no_submit_for_bracketed_multiline_paste() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "\x1b[200~first pasted line\nsecond pasted line\x1b[201~");
+        assert!(mgr.drain_submits(1).is_empty());
+    }
+
+    #[test]
+    fn track_input_submits_once_after_bracketed_multiline_paste_enter() {
+        let mgr = PtyManager::new();
+        mgr.track_input(1, "claude\r");
+        mgr.track_input(1, "\x1b[200~first pasted line\rsecond pasted line\x1b[201~");
+        mgr.track_input(1, "\r");
+
+        let submits = mgr.drain_submits(1);
+        assert_eq!(submits.len(), 1);
+        assert_eq!(submits[0].line, "first pasted line\nsecond pasted line");
     }
 
     #[test]
