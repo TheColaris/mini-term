@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 
-const { createPtyWriteQueue } = require('../.tmp-tests/ptyWriteQueue.js');
+const { createPtyWriteQueue } = require('../.tmp-tests/utils/ptyWriteQueue.js');
 
 function nextTick() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -65,6 +65,33 @@ function deferred() {
 
   blockFirstPty.resolve();
   await Promise.all([pty1, pty2]);
+
+  const coalescedEvents = [];
+  const coalescedFirstWrite = deferred();
+  const enqueueCoalesced = createPtyWriteQueue(async (ptyId, data) => {
+    coalescedEvents.push(`start:${ptyId}:${data}`);
+    if (data === 'first') {
+      await coalescedFirstWrite.promise;
+    }
+    coalescedEvents.push(`end:${ptyId}:${data}`);
+  });
+
+  const coalescedFirst = enqueueCoalesced(1, 'first');
+  const coalescedSecond = enqueueCoalesced(1, 'second');
+  const coalescedThird = enqueueCoalesced(1, 'third');
+  await nextTick();
+
+  assert.deepEqual(coalescedEvents, ['start:1:first']);
+
+  coalescedFirstWrite.resolve();
+  await Promise.all([coalescedFirst, coalescedSecond, coalescedThird]);
+
+  assert.deepEqual(coalescedEvents, [
+    'start:1:first',
+    'end:1:first',
+    'start:1:secondthird',
+    'end:1:secondthird',
+  ]);
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
